@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Team Task List</title>
+<style>
+  :root{
+    --ink:#1a1d23; --muted:#6b7280; --line:#e5e7eb; --bg:#f6f7f9; --card:#ffffff;
+    --primary:#2f4b7c; --primary-dark:#26406b; --danger:#b3261e;
+    --st-pending:#9ca3af; --st-working:#c77700; --st-phase:#2563eb; --st-done:#15803d;
+    --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.5}
+  h1,h2,h3{margin:0}
+  button{font:inherit;cursor:pointer;border:none;border-radius:8px}
+  input,select,textarea{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+  .hidden{display:none !important}
+
+  /* ---- Login ---- */
+  #login{min-height:100vh;display:grid;place-items:center;padding:20px}
+  .login-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:28px;width:100%;max-width:360px}
+  .login-card h1{font-size:20px;margin-bottom:4px}
+  .login-card p.sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+  .btn-primary{background:var(--primary);color:#fff;padding:10px 14px;font-weight:600;width:100%}
+  .btn-primary:hover{background:var(--primary-dark)}
+  .link{background:none;color:var(--primary);padding:0;font-size:13px;text-decoration:underline;width:auto}
+  .msg{font-size:13px;margin-top:12px;min-height:18px}
+  .msg.err{color:var(--danger)} .msg.ok{color:var(--st-done)}
+
+  /* ---- App shell ---- */
+  header{background:#fff;border-bottom:1px solid var(--line);padding:0 20px;
+    display:flex;align-items:center;justify-content:space-between;height:58px}
+  header .brand{font-size:16px;font-weight:700}
+  header .right{display:flex;align-items:center;gap:14px}
+  header .who{font-size:13px;color:var(--muted)}
+  header .who b{color:var(--ink)}
+  .badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;
+    background:#eef2f8;color:var(--primary);text-transform:uppercase;letter-spacing:.03em}
+  .btn-ghost{background:#fff;border:1px solid var(--line);padding:7px 12px;font-size:13px}
+  .btn-ghost:hover{background:var(--bg)}
+
+  .tabs{display:flex;gap:4px;padding:14px 20px 0;background:#fff;border-bottom:1px solid var(--line)}
+  .tab{background:none;padding:9px 14px;font-size:14px;font-weight:600;color:var(--muted);
+    border-bottom:2px solid transparent;border-radius:0}
+  .tab.active{color:var(--ink);border-bottom-color:var(--primary)}
+
+  main{max-width:1200px;margin:0 auto;padding:20px}
+  .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .toolbar .filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .toolbar .filter select{width:auto;min-width:150px}
+
+  /* ---- Table ---- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .table-wrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:900px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#fafbfc;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.detail{max-width:280px}
+  td.remarks{max-width:240px;color:var(--muted)}
+  /* collapsed by default: clamp long text to 2 lines */
+  td.detail .cell-text,td.remarks .cell-text{
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+    overflow:hidden;white-space:pre-line}
+  td.detail.open .cell-text,td.remarks.open .cell-text{-webkit-line-clamp:unset;display:block}
+  .expand-toggle{background:none;border:none;padding:2px 0 0;margin-top:2px;
+    color:var(--primary);font-size:12px;font-weight:600;text-decoration:underline;width:auto}
+  .empty{padding:40px 20px;text-align:center;color:var(--muted)}
+  .empty b{display:block;color:var(--ink);margin-bottom:4px}
+
+  .status-pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .s-Pending{background:#f3f4f6;color:var(--st-pending)}
+  .s-Working{background:#fff3e0;color:var(--st-working)}
+  .s-Phase{background:#e8f0fe;color:var(--st-phase)}
+  .s-Completed{background:#e7f6ec;color:var(--st-done)}
+  .s-Hold{background:#fef2f2;color:#b91c1c}
+
+  .row-actions{display:flex;gap:6px;white-space:nowrap}
+  .icon-btn{background:#fff;border:1px solid var(--line);padding:4px 9px;font-size:12px;font-weight:600}
+  .icon-btn:hover{background:var(--bg)}
+  .icon-btn.del{color:var(--danger);border-color:#f0d4d2}
+  .icon-btn.del:hover{background:#fdecea}
+
+  /* ---- Modal form ---- */
+  .overlay{position:fixed;inset:0;background:rgba(16,24,40,.45);display:grid;place-items:center;padding:20px;z-index:20}
+  .modal{background:#fff;border-radius:var(--radius);width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 10px 40px rgba(16,24,40,.2)}
+  .modal-head{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .modal-head h2{font-size:17px}
+  .modal-body{padding:22px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid2 .full{grid-column:1/-1}
+  .modal-body .field{margin-bottom:0}
+  .modal-foot{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px}
+  .btn-secondary{background:#fff;border:1px solid var(--line);padding:9px 16px;font-weight:600}
+  .btn-secondary:hover{background:var(--bg)}
+  .modal .btn-primary{width:auto}
+
+  @media (max-width:560px){ .grid2{grid-template-columns:1fr} header .who{display:none} }
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<section id="login">
+  <div class="login-card">
+    <h1>Team Task List</h1>
+    <p class="sub">Sign in to view and manage your tasks.</p>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" placeholder="you@company.com" />
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+    <button class="btn-primary" id="loginBtn">Sign in</button>
+    <div style="margin-top:12px"><button class="link" id="resetBtn">Forgot password?</button></div>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</section>
+
+<!-- ================= APP ================= -->
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">Team Task List</div>
+    <div class="right">
+      <span class="who">Signed in as <b id="userName">—</b></span>
+      <span class="badge" id="userRole">—</span>
+      <button class="btn-ghost" id="logoutBtn">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" id="tabMine" data-view="mine">My tasks</button>
+    <button class="tab hidden" id="tabTeam" data-view="team">Team</button>
+    <button class="tab hidden" id="tabUsers" data-view="users">Users</button>
+  </nav>
+
+  <main>
+   <div id="tasksView">
+    <div class="toolbar">
+      <div class="filter" id="teamFilter" style="display:none">
+        Filter by person
+        <select id="ownerFilter"><option value="">Everyone</option></select>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th id="ownerCol" style="display:none">Owner</th>
+              <th>Priority</th>
+              <th>Assigned</th>
+              <th>Topic</th>
+              <th>Details</th>
+              <th>Type</th>
+              <th>Frequency</th>
+              <th>Completed</th>
+              <th>Status</th>
+              <th>Remarks</th>
+              <th id="actionsCol">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="taskBody"></tbody>
+        </table>
+      </div>
+      <div class="empty hidden" id="emptyState">
+        <b>No tasks yet</b>
+        Add your first task with the button above.
+      </div>
+    </div>
+   </div>
+
+   <div id="usersView" class="hidden">
+    <div class="toolbar">
+      <h2 style="font-size:16px">Team members</h2>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="addUserBtn" style="width:auto">+ Add user</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="userBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> This list controls names, roles, who can be assigned tasks,
+      and the person filter. Creating the actual <b>login</b> for a new person is still done once in the
+      Firebase Console (Authentication → Add user), using the same email. "Reset password" emails the person
+      a secure reset link. "Reassign &amp; remove" moves all of a person's tasks to someone else, then
+      deactivates them here — to fully block their login, disable the account in the Console.
+    </p>
+   </div>
+  </main>
+</div>
+
+<!-- ================= USER MODAL ================= -->
+<div class="overlay hidden" id="userOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2 id="userModalTitle">Add user</h2>
+      <button class="link" id="closeUserModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full">
+          <label for="u_name">Name *</label>
+          <input id="u_name" type="text" placeholder="e.g. Priya" />
+        </div>
+        <div class="field full">
+          <label for="u_email">Email *</label>
+          <input id="u_email" type="email" placeholder="priya@printo.in" />
+          <div style="font-size:12px;color:var(--muted);margin-top:5px" id="u_emailHint">
+            Must exactly match the login email created in the Firebase Console (lowercase).
+          </div>
+        </div>
+        <div class="field">
+          <label for="u_role">Role</label>
+          <select id="u_role"><option value="member">Member</option><option value="manager">Manager</option></select>
+        </div>
+        <div class="field">
+          <label for="u_active">Status</label>
+          <select id="u_active"><option value="true">Active</option><option value="false">Inactive</option></select>
+        </div>
+      </div>
+      <div class="msg err" id="userModalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelUserBtn">Cancel</button>
+      <button class="btn-primary" id="saveUserBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= REASSIGN MODAL ================= -->
+<div class="overlay hidden" id="reassignOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2>Reassign &amp; remove</h2>
+      <button class="link" id="closeReassignModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:14px" id="reassignIntro"></p>
+      <div class="field full">
+        <label for="r_target">Move all their tasks to</label>
+        <select id="r_target"></select>
+      </div>
+      <div class="msg err" id="reassignMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelReassignBtn">Cancel</button>
+      <button class="btn-primary danger-btn" id="confirmReassignBtn"
+        style="background:var(--danger)">Reassign &amp; remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= TASK MODAL ================= -->
+<div class="overlay hidden" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Add task</h2>
+      <button class="link" id="closeModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full hidden" id="assignField">
+          <label for="f_assignee">Assign to</label>
+          <select id="f_assignee"></select>
+        </div>
+        <div class="field full">
+          <label for="f_topic">Task topic *</label>
+          <input id="f_topic" type="text" placeholder="e.g. Vendor onboarding validation" />
+        </div>
+        <div class="field full">
+          <label for="f_detail">Detailed description</label>
+          <textarea id="f_detail" rows="2" placeholder="What exactly needs doing"></textarea>
+        </div>
+        <div class="field">
+          <label for="f_type">Type</label>
+          <select id="f_type">
+            <option value="">—</option>
+            <option>Automation</option><option>Validation</option>
+            <option>Routine</option><option>Analysis</option><option>Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_priority">Priority</label>
+          <select id="f_priority">
+            <option value="">—</option>
+            <option>P1</option><option>P2</option><option>P3</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_freq">Frequency</label>
+          <select id="f_freq"></select>
+        </div>
+        <div class="field">
+          <label for="f_status">Status</label>
+          <select id="f_status">
+            <option>Pending</option><option>Working</option>
+            <option>Phase 1 completed</option><option>Completed</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_assigned">Assigned date</label>
+          <input id="f_assigned" type="date" />
+        </div>
+        <div class="field">
+          <label for="f_comp">Completion date</label>
+          <input id="f_comp" type="date" />
+        </div>
+        <div class="field full">
+          <label for="f_remarks">Remarks</label>
+          <textarea id="f_remarks" rows="2" placeholder="Notes, next steps, blockers"></textarea>
+        </div>
+      </div>
+      <div class="msg err" id="modalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelBtn">Cancel</button>
+      <button class="btn-primary" id="saveBtn">Save task</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
+         sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, query, where, onSnapshot,
+         addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, getDocs,
+         writeBatch, serverTimestamp }
+         from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ======================================================================
+   1) PASTE YOUR FIREBASE WEB CONFIG HERE
+   Firebase Console -> Project settings -> General -> Your apps -> Web app.
+   This web config is SAFE to expose publicly (it is not a secret key —
+   security is enforced by the Firestore Rules, not by hiding this).
+   ====================================================================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyCQvDCmmQnjGa4zc8J1tqTzBZ5i6cPNpuc",
+  authDomain: "task-list-commercial.firebaseapp.com",
+  projectId: "task-list-commercial",
+  storageBucket: "task-list-commercial.firebasestorage.app",
+  messagingSenderId: "568808694009",
+  appId: "1:568808694009:web:37a50282b24b60b2aa8228",
+  measurementId: "G-P8E7B2K1T6"
+};
+
+/* ======================================================================
+   2) MAP EACH TEAMMATE'S EMAIL TO A DISPLAY NAME + ROLE.
+   Use the exact emails you create in Firebase Authentication.
+   >>> Create every account with a LOWERCASE email and keep the keys below
+       lowercase too. A case mismatch silently hides a person's tasks. <<<
+   role "manager" = sees everyone AND can assign tasks to anyone.
+   role "member"  = sees and manages only their own tasks.
+   IMPORTANT: whoever you mark "manager" must ALSO be set in the Firestore
+   Rules isManager() email (paste in console), lowercase, exactly matching.
+   ====================================================================== */
+const TEAM = {
+  "hamsa.v@printo.in":    { name: "Hamsa",    role: "manager" },
+  "gayathri.b@printo.in": { name: "Gayathri", role: "member"  },
+  "karunya.s@printo.in":  { name: "Karunya",  role: "member"  },
+  "mohan.w@printo.in":    { name: "Mohan",    role: "member"  },
+};
+
+/* ======================================================================
+   3) DROPDOWN OPTIONS — edit these lists in ONE place.
+   Add / remove values here and every dropdown updates automatically.
+   ====================================================================== */
+const OPTIONS = {
+  priority:  ["P1", "P2", "P3", "P4"],
+  type:      ["Automation", "Validation", "Routine", "Analysis", "Reporting", "Meeting", "Other"],
+  status:    ["Pending", "Working", "Phase 1 completed", "Completed", "On hold"],
+  frequency: ["One-time", "Daily", "Weekly", "Bi-weekly", "Monthly", "Quarterly", "Half-yearly", "As needed"],
+};
+/* ====================================================================== */
+/* ====================================================================== */
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const tasksCol = collection(db, "tasks");
+const usersCol = collection(db, "users");
+
+const $ = id => document.getElementById(id);
+let currentUser = null, currentProfile = null, unsub = null;
+let editingId = null, allTasks = [], currentView = "mine";
+const expandedRows = new Set();   // task ids whose detail/remarks are expanded
+let liveUsers = {};               // Firestore users collection, keyed by lowercase email
+let unsubUsers = null, editingUserEmail = null, reassignFrom = null;
+
+/* ---------- User directory (code TEAM = seed/fallback, Firestore overrides) ---------- */
+function directory(){
+  const out = {};
+  for(const [email, info] of Object.entries(TEAM)){
+    out[email.toLowerCase()] = { email: email.toLowerCase(), name: info.name, role: info.role, active: true };
+  }
+  for(const [email, info] of Object.entries(liveUsers)){
+    const k = email.toLowerCase();
+    out[k] = { ...(out[k]||{}), ...info, email: k };
+  }
+  return out;
+}
+function getUser(email){
+  return directory()[(email||"").toLowerCase()] || { email:(email||"").toLowerCase(), name: email, role: "member", active: true };
+}
+function activeUsers(){
+  return Object.values(directory())
+    .filter(u => u.active !== false)
+    .sort((a,b) => (a.name||"").localeCompare(b.name||""));
+}
+
+/* ---------- Populate dropdowns from OPTIONS ---------- */
+function fillSelect(id, arr, blankLabel){
+  const sel = $(id);
+  const opts = (blankLabel != null ? `<option value="">${blankLabel}</option>` : "")
+    + arr.map(o => `<option>${esc(o)}</option>`).join("");
+  sel.innerHTML = opts;
+}
+fillSelect("f_priority", OPTIONS.priority, "—");
+fillSelect("f_type",     OPTIONS.type,     "—");
+fillSelect("f_status",   OPTIONS.status,   null);
+fillSelect("f_freq",     OPTIONS.frequency, "—");
+
+/* ---------- Auth ---------- */
+$("loginBtn").onclick = async () => {
+  const email = $("email").value.trim(), pw = $("password").value;
+  $("loginMsg").className = "msg";
+  if(!email || !pw){ showLoginMsg("Enter your email and password.", true); return; }
+  try{ await signInWithEmailAndPassword(auth, email, pw); }
+  catch(e){ showLoginMsg(authError(e), true); }
+};
+$("password").addEventListener("keydown", e => { if(e.key==="Enter") $("loginBtn").click(); });
+
+$("resetBtn").onclick = async () => {
+  const email = $("email").value.trim();
+  $("loginMsg").className = "msg";
+  if(!email){ showLoginMsg("Type your email above first, then click Forgot password.", true); return; }
+  try{ await sendPasswordResetEmail(auth, email);
+    showLoginMsg("Reset link sent — check your inbox (and spam).", false); }
+  catch(e){ showLoginMsg(authError(e), true); }
+};
+
+$("logoutBtn").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, async user => {
+  if(user){
+    currentUser = user;
+    const key = (user.email||"").toLowerCase();
+    // Prefer the Firestore users doc; fall back to the code TEAM seed; else default member.
+    let profile = null;
+    try{
+      const snap = await getDoc(doc(usersCol, key));
+      if(snap.exists()) profile = snap.data();
+    }catch(e){ console.warn("users lookup failed, using seed", e); }
+    currentProfile = profile || TEAM[key] || { name: user.email, role: "member" };
+    enterApp();
+  } else {
+    currentUser = null; currentProfile = null;
+    if(unsub){ unsub(); unsub = null; }
+    if(unsubUsers){ unsubUsers(); unsubUsers = null; }
+    $("app").classList.add("hidden");
+    $("login").classList.remove("hidden");
+    $("password").value = "";
+  }
+});
+
+function showLoginMsg(t, err){ const m=$("loginMsg"); m.textContent=t; m.className="msg "+(err?"err":"ok"); }
+function authError(e){
+  const c = e.code || "";
+  if(c.includes("invalid-credential")||c.includes("wrong-password")||c.includes("user-not-found"))
+    return "Wrong email or password.";
+  if(c.includes("too-many-requests")) return "Too many attempts. Wait a bit and retry.";
+  if(c.includes("invalid-email")) return "That email address looks invalid.";
+  return "Something went wrong. Try again.";
+}
+
+/* ---------- Enter app + live data ---------- */
+function enterApp(){
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("userName").textContent = currentProfile.name;
+  $("userRole").textContent = currentProfile.role;
+
+  const isManager = currentProfile.role === "manager";
+  $("tabTeam").classList.toggle("hidden", !isManager);
+  $("tabUsers").classList.toggle("hidden", !isManager);
+
+  currentView = "mine";
+  setActiveTab("mine");
+  subscribe();
+  subscribeUsers();
+}
+
+function subscribeUsers(){
+  if(unsubUsers){ unsubUsers(); unsubUsers = null; }
+  // Everyone can read the directory (names/roles aren't secret) so assignee
+  // pickers and the person filter resolve names correctly.
+  unsubUsers = onSnapshot(usersCol, snap => {
+    liveUsers = {};
+    snap.docs.forEach(d => { liveUsers[d.id.toLowerCase()] = { email: d.id.toLowerCase(), ...d.data() }; });
+    if(currentView === "users") renderUsers();
+    render();
+  }, err => console.warn("users subscribe failed (using code seed only):", err));
+}
+
+function subscribe(){
+  if(unsub){ unsub(); unsub = null; }
+  const isManager = currentProfile.role === "manager";
+  const myEmail = (currentUser.email || "").toLowerCase();
+  // Members query ONLY their own docs (rules require the matching where-clause).
+  // Manager on the Team view queries everything (rules allow it for the manager email).
+  const q = (isManager && currentView === "team")
+    ? query(tasksCol)
+    : query(tasksCol, where("ownerEmail", "==", myEmail));
+
+  unsub = onSnapshot(q, snap => {
+    allTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, err => {
+    console.error(err);
+    $("taskBody").innerHTML =
+      `<tr><td colspan="11" class="empty">Could not load tasks. Check your Firestore Rules are published.</td></tr>`;
+  });
+}
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  const v = t.dataset.view;
+  if(v === currentView) return;
+  currentView = v;
+  setActiveTab(v);
+  if(v === "users") renderUsers();
+  else subscribe();
+});
+function setActiveTab(v){
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view===v));
+  const team = v === "team";
+  const users = v === "users";
+  $("tasksView").classList.toggle("hidden", users);
+  $("usersView").classList.toggle("hidden", !users);
+  $("ownerCol").style.display = team ? "" : "none";
+  $("teamFilter").style.display = team ? "flex" : "none";
+  // Add + row actions stay available everywhere: on Team, the manager assigns
+  // and manages tasks; members only ever see their own 'My tasks' tab.
+}
+
+/* ---------- Render ---------- */
+$("ownerFilter").onchange = render;
+function render(){
+  const team = currentView === "team";
+  let rows = allTasks.slice();
+
+  if(team){
+    const names = [...new Set(rows.map(r => r.ownerName).filter(Boolean))].sort();
+    const cur = $("ownerFilter").value;
+    $("ownerFilter").innerHTML = '<option value="">Everyone</option>' +
+      names.map(n => `<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("");
+    if(cur) rows = rows.filter(r => r.ownerName === cur);
+  }
+
+  rows.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+  const body = $("taskBody");
+  $("emptyState").classList.toggle("hidden", rows.length !== 0);
+  body.innerHTML = rows.map(t => {
+    const actions =
+      `<td><div class="row-actions">
+         <button class="icon-btn" data-edit="${t.id}">Edit</button>
+         <button class="icon-btn del" data-del="${t.id}">Delete</button>
+       </div></td>`;
+    const owner = team ? `<td>${esc(t.ownerName||"")}</td>` : "";
+    const open = expandedRows.has(t.id);
+    const detail  = t.detail  || "";
+    const remarks = t.remarks || "";
+    // show a toggle only when the text is long enough to actually be clipped
+    const long = detail.length > 90 || remarks.length > 90;
+    const toggle = long
+      ? `<button class="expand-toggle" data-exp="${t.id}">${open ? "Show less" : "Show more"}</button>`
+      : "";
+    return `<tr>
+      ${owner}
+      <td>${esc(t.priority||"—")}</td>
+      <td>${esc(t.assignedDate||"—")}</td>
+      <td>${esc(t.topic||"")}</td>
+      <td class="detail ${open?"open":""}"><div class="cell-text">${esc(detail)}</div>${toggle}</td>
+      <td>${esc(t.type||"—")}</td>
+      <td>${esc(t.frequency||"—")}</td>
+      <td>${esc(t.compDate||"—")}</td>
+      <td><span class="status-pill ${statusClass(t.status)}">${esc(t.status||"Pending")}</span></td>
+      <td class="remarks ${open?"open":""}"><div class="cell-text">${esc(remarks)}</div></td>
+      ${actions}
+    </tr>`;
+  }).join("");
+
+  body.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openModal(b.dataset.edit));
+  body.querySelectorAll("[data-del]").forEach(b => b.onclick = () => removeTask(b.dataset.del));
+  body.querySelectorAll("[data-exp]").forEach(b => b.onclick = () => {
+    const id = b.dataset.exp;
+    expandedRows.has(id) ? expandedRows.delete(id) : expandedRows.add(id);
+    render();
+  });
+}
+function statusClass(s){
+  if(s==="Completed") return "s-Completed";
+  if(s==="Working") return "s-Working";
+  if(s==="Phase 1 completed") return "s-Phase";
+  if(s==="On hold") return "s-Hold";
+  return "s-Pending";
+}
+function esc(s){ return String(s??"").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- Add / edit modal ---------- */
+$("addBtn").onclick = () => openModal(null);
+$("closeModal").onclick = $("cancelBtn").onclick = closeModal;
+function openModal(id){
+  editingId = id;
+  $("modalMsg").textContent = "";
+  const t = id ? allTasks.find(x => x.id===id) : {};
+  $("modalTitle").textContent = id ? "Edit task" : "Add task";
+
+  // Assignee picker: managers only. Members always own the tasks they create.
+  const isManager = currentProfile.role === "manager";
+  $("assignField").classList.toggle("hidden", !isManager);
+  if(isManager){
+    $("f_assignee").innerHTML = activeUsers()
+      .map(u => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join("");
+    const def = (id && t.ownerEmail) ? t.ownerEmail : (currentUser.email || "").toLowerCase();
+    $("f_assignee").value = def;
+  }
+
+  $("f_topic").value    = t.topic || "";
+  $("f_detail").value   = t.detail || "";
+  $("f_type").value     = t.type || "";
+  $("f_priority").value = t.priority || "";
+  $("f_freq").value     = t.frequency || "";
+  $("f_status").value   = t.status || "Pending";
+  $("f_assigned").value = t.assignedDate || "";
+  $("f_comp").value     = t.compDate || "";
+  $("f_remarks").value  = t.remarks || "";
+  $("modalOverlay").classList.remove("hidden");
+  $("f_topic").focus();
+}
+function closeModal(){ $("modalOverlay").classList.add("hidden"); editingId = null; }
+
+$("saveBtn").onclick = async () => {
+  const topic = $("f_topic").value.trim();
+  if(!topic){ $("modalMsg").textContent = "Task topic is required."; return; }
+  const data = {
+    topic,
+    detail:       $("f_detail").value.trim(),
+    type:         $("f_type").value,
+    priority:     $("f_priority").value,
+    frequency:    $("f_freq").value.trim(),
+    status:       $("f_status").value,
+    assignedDate: $("f_assigned").value,
+    compDate:     $("f_comp").value,
+    remarks:      $("f_remarks").value.trim(),
+  };
+
+  // Owner is the assignee the manager picked; members always own their own.
+  // A manager editing can reassign (owner fields sent on update too).
+  const isManager = currentProfile.role === "manager";
+  if(isManager){
+    const email = $("f_assignee").value.toLowerCase();
+    data.ownerEmail = email;
+    data.ownerName  = getUser(email).name || email;
+  } else if(!editingId){
+    data.ownerEmail = (currentUser.email || "").toLowerCase();
+    data.ownerName  = currentProfile.name;
+  }
+
+  $("saveBtn").disabled = true;
+  try{
+    if(editingId){
+      await updateDoc(doc(db,"tasks",editingId), data);
+    } else {
+      await addDoc(tasksCol, { ...data, createdAt: serverTimestamp() });
+    }
+    closeModal();
+  } catch(e){
+    console.error(e);
+    $("modalMsg").textContent = "Could not save. Check your connection and rules.";
+  } finally { $("saveBtn").disabled = false; }
+};
+
+async function removeTask(id){
+  const t = allTasks.find(x => x.id===id);
+  if(!confirm(`Delete "${t?.topic||"this task"}"? This cannot be undone.`)) return;
+  try{ await deleteDoc(doc(db,"tasks",id)); }
+  catch(e){ console.error(e); alert("Could not delete the task."); }
+}
+
+/* ====================================================================== */
+/* ---------- USER MANAGEMENT (manager only) ---------- */
+/* ====================================================================== */
+function renderUsers(){
+  const list = Object.values(directory()).sort((a,b) => (a.name||"").localeCompare(b.name||""));
+  const me = (currentUser?.email || "").toLowerCase();
+  $("userBody").innerHTML = list.map(u => {
+    const inactive = u.active === false;
+    const isMe = u.email === me;
+    return `<tr style="${inactive ? "opacity:.55" : ""}">
+      <td>${esc(u.name||"")}</td>
+      <td>${esc(u.email)}</td>
+      <td>${esc(u.role||"member")}</td>
+      <td><span class="status-pill ${inactive ? "s-Hold" : "s-Completed"}">${inactive ? "Inactive" : "Active"}</span></td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-uedit="${esc(u.email)}">Edit</button>
+        <button class="icon-btn" data-ureset="${esc(u.email)}">Reset password</button>
+        <button class="icon-btn del" data-ureassign="${esc(u.email)}" ${isMe ? "disabled title='You cannot remove yourself'" : ""}>Reassign &amp; remove</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+  $("userBody").querySelectorAll("[data-uedit]").forEach(b => b.onclick = () => openUserModal(b.dataset.uedit));
+  $("userBody").querySelectorAll("[data-ureset]").forEach(b => b.onclick = () => resetUserPassword(b.dataset.ureset));
+  $("userBody").querySelectorAll("[data-ureassign]").forEach(b => b.onclick = () => { if(!b.disabled) openReassign(b.dataset.ureassign); });
+}
+
+/* ----- Add / edit user ----- */
+$("addUserBtn").onclick = () => openUserModal(null);
+$("closeUserModal").onclick = $("cancelUserBtn").onclick = () => $("userOverlay").classList.add("hidden");
+function openUserModal(email){
+  editingUserEmail = email;
+  $("userModalMsg").textContent = "";
+  const u = email ? getUser(email) : { name:"", role:"member", active:true };
+  $("userModalTitle").textContent = email ? "Edit user" : "Add user";
+  $("u_name").value  = u.name || "";
+  $("u_email").value = email || "";
+  $("u_email").disabled = !!email;                 // email is the document id; don't rename
+  $("u_emailHint").style.display = email ? "none" : "block";
+  $("u_role").value   = u.role || "member";
+  $("u_active").value = String(u.active !== false);
+  $("userOverlay").classList.remove("hidden");
+  $(email ? "u_name" : "u_email").focus();
+}
+$("saveUserBtn").onclick = async () => {
+  const name  = $("u_name").value.trim();
+  const email = (editingUserEmail || $("u_email").value.trim()).toLowerCase();
+  if(!name){ $("userModalMsg").textContent = "Name is required."; return; }
+  if(!email || !email.includes("@")){ $("userModalMsg").textContent = "A valid email is required."; return; }
+  const data = { name, role: $("u_role").value, active: $("u_active").value === "true" };
+  $("saveUserBtn").disabled = true;
+  try{
+    await setDoc(doc(usersCol, email), data, { merge: true });
+    $("userOverlay").classList.add("hidden");
+  }catch(e){
+    console.error(e);
+    $("userModalMsg").textContent = "Could not save. Check your Firestore rules allow managers to write /users.";
+  }finally{ $("saveUserBtn").disabled = false; }
+};
+
+/* ----- Reset password (emails a secure reset link) ----- */
+async function resetUserPassword(email){
+  if(!confirm(`Send a password-reset email to ${email}?`)) return;
+  try{
+    await sendPasswordResetEmail(auth, email);
+    alert(`Reset link sent to ${email}. They should check inbox and spam.`);
+  }catch(e){
+    console.error(e);
+    alert("Could not send reset email. Make sure this email has a login in Firebase Authentication.");
+  }
+}
+
+/* ----- Reassign all tasks, then deactivate the user ----- */
+$("closeReassignModal").onclick = $("cancelReassignBtn").onclick = () => $("reassignOverlay").classList.add("hidden");
+function openReassign(email){
+  reassignFrom = email.toLowerCase();
+  const from = getUser(reassignFrom);
+  $("reassignMsg").textContent = "";
+  $("reassignIntro").innerHTML =
+    `All tasks owned by <b>${esc(from.name)}</b> will be moved to the person you pick, then `
+    + `<b>${esc(from.name)}</b> will be marked <b>Inactive</b> here.`;
+  const targets = activeUsers().filter(u => u.email !== reassignFrom);
+  $("r_target").innerHTML = targets.map(u => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join("");
+  if(!targets.length){ $("reassignMsg").textContent = "No other active user to receive the tasks. Add one first."; }
+  $("reassignOverlay").classList.remove("hidden");
+}
+$("confirmReassignBtn").onclick = async () => {
+  const target = $("r_target").value.toLowerCase();
+  if(!target){ $("reassignMsg").textContent = "Pick someone to receive the tasks."; return; }
+  const targetUser = getUser(target);
+  $("confirmReassignBtn").disabled = true;
+  try{
+    // Move every task owned by the source user to the target.
+    const snap = await getDocs(query(tasksCol, where("ownerEmail", "==", reassignFrom)));
+    // writeBatch handles up to 500 ops; chunk to be safe.
+    const docs = snap.docs;
+    for(let i = 0; i < docs.length; i += 450){
+      const batch = writeBatch(db);
+      docs.slice(i, i + 450).forEach(d =>
+        batch.update(d.ref, { ownerEmail: target, ownerName: targetUser.name }));
+      await batch.commit();
+    }
+    // Deactivate the source user in the directory.
+    await setDoc(doc(usersCol, reassignFrom), { active: false }, { merge: true });
+    $("reassignOverlay").classList.add("hidden");
+    alert(`Moved ${docs.length} task(s) to ${targetUser.name} and deactivated ${getUser(reassignFrom).name}.`);
+  }catch(e){
+    console.error(e);
+    $("reassignMsg").textContent = "Could not complete. Check your rules allow the manager to update tasks and /users.";
+  }finally{ $("confirmReassignBtn").disabled = false; }
+};
+</script>
+</body>
+</html>
