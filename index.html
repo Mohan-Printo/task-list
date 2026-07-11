@@ -82,6 +82,26 @@
   .s-Phase{background:#e8f0fe;color:var(--st-phase)}
   .s-Completed{background:#e7f6ec;color:var(--st-done)}
   .s-Hold{background:#fef2f2;color:#b91c1c}
+  .s-Removed{background:#eef2f8;color:#64748b}
+  tr.row-removed{opacity:.55;background:#fafbfc}
+  .tag-builtin{font-size:10.5px;font-weight:600;color:var(--muted);background:#f1f3f5;
+    padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
+
+  /* ---- Dropdown-value editor (Settings) ---- */
+  .opt-group{padding:16px 0;border-bottom:1px solid var(--line)}
+  .opt-group:last-child{border-bottom:none}
+  .opt-head{font-size:13px;font-weight:700;margin-bottom:9px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#eef2f8;color:var(--primary);
+    font-size:13px;font-weight:600;padding:4px 6px 4px 11px;border-radius:999px}
+  .chip .chip-label{cursor:pointer}
+  .chip .chip-label:hover{text-decoration:underline}
+  .chip-x{background:rgba(47,75,124,.12);color:var(--primary);border:none;border-radius:999px;
+    width:18px;height:18px;line-height:1;font-size:11px;display:grid;place-items:center;padding:0}
+  .chip-x:hover{background:var(--danger);color:#fff}
+  .opt-add{display:flex;gap:8px;max-width:360px}
+  .opt-add input{flex:1}
+  .opt-add .btn-secondary{white-space:nowrap}
 
   .row-actions{display:flex;gap:6px;white-space:nowrap}
   .icon-btn{background:#fff;border:1px solid var(--line);padding:4px 9px;font-size:12px;font-weight:600}
@@ -142,6 +162,7 @@
     <button class="tab active" id="tabMine" data-view="mine">My tasks</button>
     <button class="tab hidden" id="tabTeam" data-view="team">Team</button>
     <button class="tab hidden" id="tabUsers" data-view="users">Users</button>
+    <button class="tab hidden" id="tabSettings" data-view="settings">⚙ Settings</button>
   </nav>
 
   <main>
@@ -158,21 +179,7 @@
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th id="ownerCol" style="display:none">Owner</th>
-              <th>Priority</th>
-              <th>Assigned</th>
-              <th>Topic</th>
-              <th>Details</th>
-              <th>Type</th>
-              <th>Frequency</th>
-              <th>Completed</th>
-              <th>Status</th>
-              <th>Remarks</th>
-              <th id="actionsCol">Actions</th>
-            </tr>
-          </thead>
+          <thead id="taskHead"></thead>
           <tbody id="taskBody"></tbody>
         </table>
       </div>
@@ -205,6 +212,44 @@
       Firebase Console (Authentication → Add user), using the same email. "Reset password" emails the person
       a secure reset link. "Reassign &amp; remove" moves all of a person's tasks to someone else, then
       deactivates them here — to fully block their login, disable the account in the Console.
+    </p>
+   </div>
+
+   <div id="settingsView" class="hidden">
+    <div class="toolbar">
+      <h2 style="font-size:16px">Table columns</h2>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="addColBtn" style="width:auto">+ Add column</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th style="width:90px">Order</th><th>Column</th><th>Type</th><th style="width:70px">Shown</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="colBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> Column layout is shared by everyone. Use ↑/↓ to reorder,
+      the checkbox to show/hide a column, and <b>Add column</b> to create a custom field
+      (Text, Date, or Dropdown) that appears in the table and the task form. Built-in columns can be
+      hidden and renamed but not deleted. Saving requires your Firestore rules to allow the manager to
+      write <code>/config/columns</code> (and everyone to read it).
+    </p>
+
+    <div class="toolbar" style="margin-top:28px">
+      <h2 style="font-size:16px">Dropdown values</h2>
+    </div>
+    <div class="card" style="padding:6px 18px 18px">
+      <div id="optsBody"></div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> These are the choices in the task form's dropdowns.
+      Type a value and press <b>Add</b> (or Enter), click a value to rename it, or the <b>✕</b> to remove it.
+      Renaming a value does <b>not</b> change tasks already saved with the old value. Saving requires your
+      Firestore rules to allow the manager to write <code>/config/options</code>.
     </p>
    </div>
   </main>
@@ -271,6 +316,41 @@
   </div>
 </div>
 
+<!-- ================= ADD COLUMN MODAL ================= -->
+<div class="overlay hidden" id="colOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2>Add column</h2>
+      <button class="link" id="closeColModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full">
+          <label for="c_label">Column name *</label>
+          <input id="c_label" type="text" placeholder="e.g. Client" />
+        </div>
+        <div class="field full">
+          <label for="c_type">Type</label>
+          <select id="c_type">
+            <option value="text">Text</option>
+            <option value="date">Date</option>
+            <option value="select">Dropdown</option>
+          </select>
+        </div>
+        <div class="field full hidden" id="c_optionsField">
+          <label for="c_options">Dropdown options (one per line)</label>
+          <textarea id="c_options" rows="4" placeholder="North&#10;South&#10;East&#10;West"></textarea>
+        </div>
+      </div>
+      <div class="msg err" id="colModalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelColBtn">Cancel</button>
+      <button class="btn-primary" id="saveColBtn">Add column</button>
+    </div>
+  </div>
+</div>
+
 <!-- ================= TASK MODAL ================= -->
 <div class="overlay hidden" id="modalOverlay">
   <div class="modal">
@@ -330,6 +410,8 @@
           <label for="f_remarks">Remarks</label>
           <textarea id="f_remarks" rows="2" placeholder="Notes, next steps, blockers"></textarea>
         </div>
+        <!-- Custom columns (added by the manager in Settings) are injected here -->
+        <div class="grid2 full" id="customFields" style="gap:14px"></div>
       </div>
       <div class="msg err" id="modalMsg"></div>
     </div>
@@ -348,6 +430,7 @@ import { getFirestore, collection, query, where, onSnapshot,
          addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, getDocs,
          writeBatch, serverTimestamp }
          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import emailjs from "https://cdn.jsdelivr.net/npm/@emailjs/browser@4/+esm";
 
 /* ======================================================================
    1) PASTE YOUR FIREBASE WEB CONFIG HERE
@@ -363,6 +446,24 @@ const firebaseConfig = {
   messagingSenderId: "568808694009",
   appId: "1:568808694009:web:37a50282b24b60b2aa8228",
   measurementId: "G-P8E7B2K1T6"
+};
+
+/* ======================================================================
+   1b) EMAIL NOTIFICATIONS via EmailJS (free tier, no billing needed).
+   ONE-TIME SETUP at https://www.emailjs.com (free account):
+     1. Email Services  -> add a service (connect Gmail) -> copy its Service ID.
+     2. Email Templates -> create a template whose "To Email" field is  {{to_email}}
+        and whose Subject is  {{subject}}  and whose Content contains  {{message}}
+        (you can also use {{to_name}} and {{from_name}}). Copy its Template ID.
+     3. Account -> General -> copy your Public Key.
+     4. Paste the three values below. Until you do, the app runs normally but
+        just skips sending email (it logs a warning to the console instead).
+   Free plan = ~200 emails/month, free for life.
+   ====================================================================== */
+const EMAILJS = {
+  publicKey:  "8JNNlttKtlddf5N3v",
+  serviceId:  "service_t7kungs",
+  templateId: "template_69m5ue6",
 };
 
 /* ======================================================================
@@ -387,11 +488,30 @@ const TEAM = {
    Add / remove values here and every dropdown updates automatically.
    ====================================================================== */
 const OPTIONS = {
-  priority:  ["P1", "P2", "P3", "P4"],
+  priority:  ["P0", "P1", "P2", "P3", "P4"],
   type:      ["Automation", "Validation", "Routine", "Analysis", "Reporting", "Meeting", "Other"],
   status:    ["Pending", "Working", "Phase 1 completed", "Completed", "On hold"],
   frequency: ["One-time", "Daily", "Weekly", "Bi-weekly", "Monthly", "Quarterly", "Half-yearly", "As needed"],
 };
+/* Manager-only status. When a manager sets a task to this, it drops to the
+   bottom of the Team view (greyed out) and shows simply as "Completed" to the
+   member who owns it. Members never see this option in their status dropdown. */
+const MANAGER_STATUS = "Completed - Remove";
+
+/* Built-in table columns (order here is the default order). Each maps to a task
+   field. Managers can reorder / hide / rename these in Settings, and add their own
+   custom columns — the whole layout is stored in Firestore at config/columns. */
+const BUILTIN_COLUMNS = [
+  { key: "priority",     label: "Priority"  },
+  { key: "assignedDate", label: "Assigned"  },
+  { key: "topic",        label: "Topic"     },
+  { key: "detail",       label: "Details"   },
+  { key: "type",         label: "Type"      },
+  { key: "frequency",    label: "Frequency" },
+  { key: "compDate",     label: "Completed" },
+  { key: "status",       label: "Status"    },
+  { key: "remarks",      label: "Remarks"   },
+];
 /* ====================================================================== */
 /* ====================================================================== */
 
@@ -401,12 +521,56 @@ const db   = getFirestore(app);
 const tasksCol = collection(db, "tasks");
 const usersCol = collection(db, "users");
 
+// EmailJS is "ready" only once the three IDs above are filled in.
+const emailReady = Object.values(EMAILJS).every(v => v && !v.startsWith("YOUR_"));
+if(emailReady){ try{ emailjs.init({ publicKey: EMAILJS.publicKey }); }catch(e){ console.warn("EmailJS init failed", e); } }
+
 const $ = id => document.getElementById(id);
 let currentUser = null, currentProfile = null, unsub = null;
 let editingId = null, allTasks = [], currentView = "mine";
-const expandedRows = new Set();   // task ids whose detail/remarks are expanded
+const expandedRows = new Set();   // task ids whose detail/remarks are expanded inline
 let liveUsers = {};               // Firestore users collection, keyed by lowercase email
 let unsubUsers = null, editingUserEmail = null, reassignFrom = null;
+let columnConfig = null, unsubConfig = null;   // shared column layout (config/columns doc)
+let optionsConfig = null, unsubOptions = null; // shared dropdown values (config/options doc)
+
+/* The four editable dropdown lists (order here = order shown). */
+const OPTION_LISTS = [
+  ["priority",  "Priority"],
+  ["type",      "Type"],
+  ["status",    "Status"],
+  ["frequency", "Frequency"],
+];
+/* Effective dropdown values: stored config overrides the code defaults. */
+function effectiveOptions(){
+  const o = optionsConfig || {};
+  const pick = k => (Array.isArray(o[k]) && o[k].length) ? o[k] : OPTIONS[k];
+  return { priority: pick("priority"), type: pick("type"), status: pick("status"), frequency: pick("frequency") };
+}
+/* A fresh, mutable copy of all four lists (used before saving edits). */
+function currentLists(){
+  const o = effectiveOptions();
+  return { priority:o.priority.slice(), type:o.type.slice(), status:o.status.slice(), frequency:o.frequency.slice() };
+}
+
+/* Resolve the effective, ordered column list from the stored config, merging in
+   any built-in that isn't stored yet and dropping stale built-in keys. */
+function effectiveColumns(){
+  const known = new Set(BUILTIN_COLUMNS.map(c => c.key));
+  const defLabel = Object.fromEntries(BUILTIN_COLUMNS.map(c => [c.key, c.label]));
+  let cols;
+  if(columnConfig && Array.isArray(columnConfig.columns) && columnConfig.columns.length){
+    cols = columnConfig.columns
+      .filter(c => c && c.key && (c.builtin ? known.has(c.key) : true))
+      .map(c => ({ ...c, builtin: !!c.builtin, visible: c.visible !== false }));
+    const present = new Set(cols.map(c => c.key));
+    BUILTIN_COLUMNS.forEach(b => { if(!present.has(b.key)) cols.push({ key:b.key, label:b.label, builtin:true, visible:true }); });
+  } else {
+    cols = BUILTIN_COLUMNS.map(c => ({ key:c.key, label:c.label, builtin:true, visible:true }));
+  }
+  cols.forEach(c => { if(c.builtin && !c.label) c.label = defLabel[c.key] || c.key; });
+  return cols;
+}
 
 /* ---------- User directory (code TEAM = seed/fallback, Firestore overrides) ---------- */
 function directory(){
@@ -478,6 +642,8 @@ onAuthStateChanged(auth, async user => {
     currentUser = null; currentProfile = null;
     if(unsub){ unsub(); unsub = null; }
     if(unsubUsers){ unsubUsers(); unsubUsers = null; }
+    if(unsubConfig){ unsubConfig(); unsubConfig = null; }
+    if(unsubOptions){ unsubOptions(); unsubOptions = null; }
     $("app").classList.add("hidden");
     $("login").classList.remove("hidden");
     $("password").value = "";
@@ -504,11 +670,33 @@ function enterApp(){
   const isManager = currentProfile.role === "manager";
   $("tabTeam").classList.toggle("hidden", !isManager);
   $("tabUsers").classList.toggle("hidden", !isManager);
+  $("tabSettings").classList.toggle("hidden", !isManager);
 
   currentView = "mine";
   setActiveTab("mine");
   subscribe();
   subscribeUsers();
+  subscribeConfig();
+  subscribeOptions();
+}
+
+function subscribeConfig(){
+  if(unsubConfig){ unsubConfig(); unsubConfig = null; }
+  // Everyone reads the column layout so the table/form render consistently.
+  unsubConfig = onSnapshot(doc(db, "config", "columns"), snap => {
+    columnConfig = snap.exists() ? snap.data() : null;
+    if(currentView === "settings") renderColumns();
+    render();
+  }, err => console.warn("config subscribe failed (using default columns):", err));
+}
+
+function subscribeOptions(){
+  if(unsubOptions){ unsubOptions(); unsubOptions = null; }
+  // Everyone reads the dropdown values so the task form shows the same choices.
+  unsubOptions = onSnapshot(doc(db, "config", "options"), snap => {
+    optionsConfig = snap.exists() ? snap.data() : null;
+    if(currentView === "settings") renderOptions();
+  }, err => console.warn("options subscribe failed (using default values):", err));
 }
 
 function subscribeUsers(){
@@ -539,7 +727,7 @@ function subscribe(){
   }, err => {
     console.error(err);
     $("taskBody").innerHTML =
-      `<tr><td colspan="11" class="empty">Could not load tasks. Check your Firestore Rules are published.</td></tr>`;
+      `<tr><td colspan="30" class="empty">Could not load tasks. Check your Firestore Rules are published.</td></tr>`;
   });
 }
 
@@ -550,16 +738,15 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   currentView = v;
   setActiveTab(v);
   if(v === "users") renderUsers();
+  else if(v === "settings") renderSettings();
   else subscribe();
 });
 function setActiveTab(v){
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view===v));
-  const team = v === "team";
-  const users = v === "users";
-  $("tasksView").classList.toggle("hidden", users);
-  $("usersView").classList.toggle("hidden", !users);
-  $("ownerCol").style.display = team ? "" : "none";
-  $("teamFilter").style.display = team ? "flex" : "none";
+  $("tasksView").classList.toggle("hidden", v !== "mine" && v !== "team");
+  $("usersView").classList.toggle("hidden", v !== "users");
+  $("settingsView").classList.toggle("hidden", v !== "settings");
+  $("teamFilter").style.display = v === "team" ? "flex" : "none";
   // Add + row actions stay available everywhere: on Team, the manager assigns
   // and manages tasks; members only ever see their own 'My tasks' tab.
 }
@@ -578,38 +765,44 @@ function render(){
     if(cur) rows = rows.filter(r => r.ownerName === cur);
   }
 
-  rows.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+  if(team){
+    // Team view: "Completed - Remove" tasks drop to the bottom; otherwise newest first.
+    rows.sort((a,b) => {
+      const ar = a.status === MANAGER_STATUS ? 1 : 0;
+      const br = b.status === MANAGER_STATUS ? 1 : 0;
+      if(ar !== br) return ar - br;
+      return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
+    });
+  } else {
+    rows.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+  }
+
+  // Build the header from the visible columns (Owner first on Team, Actions last).
+  const cols = effectiveColumns().filter(c => c.visible);
+  const head = [];
+  if(team) head.push(`<th>Owner</th>`);
+  cols.forEach(c => head.push(`<th>${esc(c.label)}</th>`));
+  head.push(`<th>Actions</th>`);
+  $("taskHead").innerHTML = `<tr>${head.join("")}</tr>`;
 
   const body = $("taskBody");
   $("emptyState").classList.toggle("hidden", rows.length !== 0);
   body.innerHTML = rows.map(t => {
-    const actions =
+    const removed = t.status === MANAGER_STATUS;
+    // Member view shows a removed task simply as "Completed"; the Team view keeps
+    // the full "Completed - Remove" label and greys the whole row.
+    const displayStatus = (!team && removed) ? "Completed" : (t.status || "Pending");
+    const rowCls = (team && removed) ? ' class="row-removed"' : "";
+    const open = expandedRows.has(t.id);
+    const cells = [];
+    if(team) cells.push(`<td>${esc(t.ownerName||"")}</td>`);
+    cols.forEach(c => cells.push(renderCell(c, t, open, displayStatus)));
+    cells.push(
       `<td><div class="row-actions">
          <button class="icon-btn" data-edit="${t.id}">Edit</button>
          <button class="icon-btn del" data-del="${t.id}">Delete</button>
-       </div></td>`;
-    const owner = team ? `<td>${esc(t.ownerName||"")}</td>` : "";
-    const open = expandedRows.has(t.id);
-    const detail  = t.detail  || "";
-    const remarks = t.remarks || "";
-    // show a toggle only when the text is long enough to actually be clipped
-    const long = detail.length > 90 || remarks.length > 90;
-    const toggle = long
-      ? `<button class="expand-toggle" data-exp="${t.id}">${open ? "Show less" : "Show more"}</button>`
-      : "";
-    return `<tr>
-      ${owner}
-      <td>${esc(t.priority||"—")}</td>
-      <td>${esc(t.assignedDate||"—")}</td>
-      <td>${esc(t.topic||"")}</td>
-      <td class="detail ${open?"open":""}"><div class="cell-text">${esc(detail)}</div>${toggle}</td>
-      <td>${esc(t.type||"—")}</td>
-      <td>${esc(t.frequency||"—")}</td>
-      <td>${esc(t.compDate||"—")}</td>
-      <td><span class="status-pill ${statusClass(t.status)}">${esc(t.status||"Pending")}</span></td>
-      <td class="remarks ${open?"open":""}"><div class="cell-text">${esc(remarks)}</div></td>
-      ${actions}
-    </tr>`;
+       </div></td>`);
+    return `<tr${rowCls}>${cells.join("")}</tr>`;
   }).join("");
 
   body.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openModal(b.dataset.edit));
@@ -620,12 +813,43 @@ function render(){
     render();
   });
 }
+
+/* Render one table cell for a given column + task. */
+function renderCell(col, t, open, displayStatus){
+  if(!col.builtin){
+    const v = (t.custom && t.custom[col.key]) || "";
+    return `<td>${v ? esc(v) : "—"}</td>`;
+  }
+  switch(col.key){
+    case "topic":  return `<td>${esc(t.topic||"")}</td>`;
+    case "status": return `<td><span class="status-pill ${statusClass(displayStatus)}">${esc(displayStatus)}</span></td>`;
+    case "detail": {
+      const detail = t.detail || "";
+      const inner = detail
+        ? `<div class="cell-text">${esc(detail)}</div>`
+          + (detail.length > 90 ? `<button class="expand-toggle" data-exp="${t.id}">${open ? "Show less" : "Show more"}</button>` : "")
+        : "—";
+      return `<td class="detail ${open?"open":""}">${inner}</td>`;
+    }
+    case "remarks": {
+      const remarks = t.remarks || "";
+      return `<td class="remarks ${open?"open":""}">${remarks ? `<div class="cell-text">${esc(remarks)}</div>` : "—"}</td>`;
+    }
+    default: return `<td>${esc(t[col.key] || "—")}</td>`;
+  }
+}
 function statusClass(s){
   if(s==="Completed") return "s-Completed";
+  if(s===MANAGER_STATUS) return "s-Removed";
   if(s==="Working") return "s-Working";
   if(s==="Phase 1 completed") return "s-Phase";
   if(s==="On hold") return "s-Hold";
   return "s-Pending";
+}
+// Today's date as YYYY-MM-DD (local time) for prefilling date inputs.
+function todayISO(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 function esc(s){ return String(s??"").replace(/[&<>"]/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -649,15 +873,46 @@ function openModal(id){
     $("f_assignee").value = def;
   }
 
+  // Fill the dropdowns from the manager-editable values (config/options).
+  const opt = effectiveOptions();
+  fillSelect("f_priority", opt.priority, "—");
+  fillSelect("f_type",     opt.type,     "—");
+  fillSelect("f_freq",     opt.frequency, "—");
+  // Status list: managers also get the "Completed - Remove" option.
+  const statusList = isManager ? [...opt.status, MANAGER_STATUS] : opt.status;
+  $("f_status").innerHTML = statusList.map(o => `<option>${esc(o)}</option>`).join("");
+
   $("f_topic").value    = t.topic || "";
   $("f_detail").value   = t.detail || "";
   $("f_type").value     = t.type || "";
   $("f_priority").value = t.priority || "";
   $("f_freq").value     = t.frequency || "";
-  $("f_status").value   = t.status || "Pending";
-  $("f_assigned").value = t.assignedDate || "";
+  // A member editing a manager-removed task sees (and would save) plain "Completed".
+  let statusVal = t.status || "Pending";
+  if(!isManager && statusVal === MANAGER_STATUS) statusVal = "Completed";
+  $("f_status").value   = statusVal;
+  // New task: auto-capture today's date (still editable). Existing task: keep its date.
+  $("f_assigned").value = t.assignedDate || (id ? "" : todayISO());
   $("f_comp").value     = t.compDate || "";
   $("f_remarks").value  = t.remarks || "";
+
+  // Custom columns (defined in Settings) get their own inputs, prefilled from the task.
+  const customCols = effectiveColumns().filter(c => !c.builtin);
+  $("customFields").innerHTML = customCols.map(c => {
+    const val = (t.custom && t.custom[c.key]) || "";
+    let input;
+    if(c.type === "date"){
+      input = `<input type="date" data-cf="${esc(c.key)}" value="${esc(val)}" />`;
+    } else if(c.type === "select"){
+      input = `<select data-cf="${esc(c.key)}"><option value="">—</option>`
+        + (c.options||[]).map(o => `<option ${o===val?"selected":""}>${esc(o)}</option>`).join("")
+        + `</select>`;
+    } else {
+      input = `<input type="text" data-cf="${esc(c.key)}" value="${esc(val)}" />`;
+    }
+    return `<div class="field full"><label>${esc(c.label)}</label>${input}</div>`;
+  }).join("");
+
   $("modalOverlay").classList.remove("hidden");
   $("f_topic").focus();
 }
@@ -678,6 +933,14 @@ $("saveBtn").onclick = async () => {
     remarks:      $("f_remarks").value.trim(),
   };
 
+  // Collect custom-column values into a single map on the task.
+  const custom = {};
+  document.querySelectorAll("#customFields [data-cf]").forEach(el => {
+    const v = (el.value || "").trim();
+    if(v) custom[el.dataset.cf] = v;
+  });
+  data.custom = custom;
+
   // Owner is the assignee the manager picked; members always own their own.
   // A manager editing can reassign (owner fields sent on update too).
   const isManager = currentProfile.role === "manager";
@@ -693,9 +956,12 @@ $("saveBtn").onclick = async () => {
   $("saveBtn").disabled = true;
   try{
     if(editingId){
+      const oldT = allTasks.find(x => x.id === editingId) || {};
       await updateDoc(doc(db,"tasks",editingId), data);
+      fireTaskNotification(false, data, diffSummary(oldT, data), isManager);
     } else {
       await addDoc(tasksCol, { ...data, createdAt: serverTimestamp() });
+      fireTaskNotification(true, data, [], isManager);
     }
     closeModal();
   } catch(e){
@@ -704,11 +970,270 @@ $("saveBtn").onclick = async () => {
   } finally { $("saveBtn").disabled = false; }
 };
 
+/* ---------- Email notifications (EmailJS) ---------- */
+async function notify(toEmail, toName, subject, message){
+  if(!emailReady){ console.warn("EmailJS not configured — skipping email to", toEmail); return; }
+  if(!toEmail) return;
+  try{
+    await emailjs.send(EMAILJS.serviceId, EMAILJS.templateId, {
+      to_email:  toEmail,
+      to_name:   toName || toEmail,
+      subject,
+      message,
+      from_name: currentProfile?.name || "Team Task List",
+    });
+  }catch(e){ console.error("Email send failed for", toEmail, e); }
+}
+function managerEmails(){
+  return Object.values(directory())
+    .filter(u => u.role === "manager" && u.active !== false)
+    .map(u => u.email);
+}
+function taskSummaryText(d){
+  return [
+    `Topic: ${d.topic || "—"}`,
+    `Priority: ${d.priority || "—"}`,
+    `Status: ${d.status || "Pending"}`,
+    `Type: ${d.type || "—"}`,
+    `Assigned date: ${d.assignedDate || "—"}`,
+    `Details: ${d.detail || "—"}`,
+    `Remarks: ${d.remarks || "—"}`,
+  ].join("\n");
+}
+function diffSummary(oldT, data){
+  const fields = [
+    ["topic","Topic"],["detail","Details"],["type","Type"],["priority","Priority"],
+    ["frequency","Frequency"],["status","Status"],["assignedDate","Assigned date"],
+    ["compDate","Completion date"],["remarks","Remarks"],
+  ];
+  const lines = [];
+  fields.forEach(([k,label]) => {
+    const a = oldT?.[k] || "", b = data[k] || "";
+    if(a !== b) lines.push(`• ${label}: "${a||"—"}" → "${b||"—"}"`);
+  });
+  if(oldT && data.ownerEmail && (oldT.ownerEmail||"") !== data.ownerEmail)
+    lines.push(`• Reassigned to: ${data.ownerName || data.ownerEmail}`);
+  return lines;
+}
+// Fire the right emails after a task is created/edited (never emails the actor).
+function fireTaskNotification(isCreate, data, changes, isManager){
+  const me = (currentUser.email || "").toLowerCase();
+  const topic = data.topic || "task";
+  if(isManager){
+    // Manager changed a task -> tell the assignee (unless the manager owns it).
+    const to = (data.ownerEmail || "").toLowerCase();
+    if(!to || to === me) return;
+    const toName = data.ownerName || getUser(to).name || to;
+    if(isCreate){
+      notify(to, toName, `New task assigned: ${topic}`,
+        `${currentProfile.name} assigned you a new task.\n\n${taskSummaryText(data)}`);
+    } else {
+      notify(to, toName, `Task updated: ${topic}`,
+        `${currentProfile.name} updated your task "${topic}".\n\n`
+        + (changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
+        + taskSummaryText(data));
+    }
+  } else {
+    // Member changed a task -> tell the manager(s).
+    const verb = isCreate ? "created" : "updated";
+    managerEmails().filter(e => e !== me).forEach(to => {
+      const toName = getUser(to).name || to;
+      notify(to, toName, `Task ${verb} by ${currentProfile.name}: ${topic}`,
+        `${currentProfile.name} ${verb} a task.\n\n`
+        + (!isCreate && changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
+        + taskSummaryText(data));
+    });
+  }
+}
+
 async function removeTask(id){
   const t = allTasks.find(x => x.id===id);
   if(!confirm(`Delete "${t?.topic||"this task"}"? This cannot be undone.`)) return;
   try{ await deleteDoc(doc(db,"tasks",id)); }
   catch(e){ console.error(e); alert("Could not delete the task."); }
+}
+
+/* ====================================================================== */
+/* ---------- SETTINGS: COLUMNS + DROPDOWN VALUES (manager only) ---------- */
+/* ====================================================================== */
+function renderSettings(){ renderColumns(); renderOptions(); }
+
+function renderColumns(){
+  const cols = effectiveColumns();
+  $("colBody").innerHTML = cols.map((c, i) => {
+    const typeLabel = c.builtin ? "—"
+      : (c.type === "date" ? "Date" : c.type === "select" ? `Dropdown (${(c.options||[]).length})` : "Text");
+    return `<tr>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-cup="${i}" ${i===0?"disabled":""} title="Move up">↑</button>
+        <button class="icon-btn" data-cdown="${i}" ${i===cols.length-1?"disabled":""} title="Move down">↓</button>
+      </div></td>
+      <td>${esc(c.label)}${c.builtin?` <span class="tag-builtin">built-in</span>`:""}</td>
+      <td>${typeLabel}</td>
+      <td style="text-align:center"><input type="checkbox" data-cvis="${i}" ${c.visible?"checked":""} style="width:auto" /></td>
+      <td><div class="row-actions">
+        <button class="icon-btn" data-cren="${i}">Rename</button>
+        ${c.builtin?"":`<button class="icon-btn del" data-cdel="${i}">Delete</button>`}
+      </div></td>
+    </tr>`;
+  }).join("");
+
+  const body = $("colBody");
+  body.querySelectorAll("[data-cup]").forEach(b => b.onclick = () => moveColumn(+b.dataset.cup, -1));
+  body.querySelectorAll("[data-cdown]").forEach(b => b.onclick = () => moveColumn(+b.dataset.cdown, +1));
+  body.querySelectorAll("[data-cvis]").forEach(b => b.onchange = () => toggleColumn(+b.dataset.cvis, b.checked));
+  body.querySelectorAll("[data-cren]").forEach(b => b.onclick = () => renameColumn(+b.dataset.cren));
+  body.querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => deleteColumn(+b.dataset.cdel));
+}
+
+function moveColumn(i, dir){
+  const cols = effectiveColumns();
+  const j = i + dir;
+  if(j < 0 || j >= cols.length) return;
+  [cols[i], cols[j]] = [cols[j], cols[i]];
+  saveColumns(cols);
+}
+function toggleColumn(i, visible){
+  const cols = effectiveColumns();
+  if(!cols[i]) return;
+  cols[i].visible = visible;
+  saveColumns(cols);
+}
+function renameColumn(i){
+  const cols = effectiveColumns();
+  if(!cols[i]) return;
+  const name = prompt("Column name:", cols[i].label);
+  if(name == null) return;
+  const trimmed = name.trim();
+  if(!trimmed) return;
+  cols[i].label = trimmed;
+  saveColumns(cols);
+}
+function deleteColumn(i){
+  const cols = effectiveColumns();
+  if(!cols[i] || cols[i].builtin) return;
+  if(!confirm(`Delete the "${cols[i].label}" column? Existing task values for it stay in the database but stop showing.`)) return;
+  cols.splice(i, 1);
+  saveColumns(cols);
+}
+
+async function saveColumns(cols){
+  columnConfig = { columns: cols };   // optimistic; the snapshot will confirm
+  renderSettings();
+  render();
+  try{
+    await setDoc(doc(db, "config", "columns"), { columns: cols });
+  }catch(e){
+    console.error(e);
+    alert("Could not save column settings. Check your Firestore rules allow the manager to write /config/columns.");
+  }
+}
+
+/* ----- Add custom column modal ----- */
+$("addColBtn").onclick = () => {
+  $("c_label").value = "";
+  $("c_type").value = "text";
+  $("c_options").value = "";
+  $("c_optionsField").classList.add("hidden");
+  $("colModalMsg").textContent = "";
+  $("colOverlay").classList.remove("hidden");
+  $("c_label").focus();
+};
+$("closeColModal").onclick = $("cancelColBtn").onclick = () => $("colOverlay").classList.add("hidden");
+$("c_type").onchange = () => $("c_optionsField").classList.toggle("hidden", $("c_type").value !== "select");
+$("saveColBtn").onclick = async () => {
+  const label = $("c_label").value.trim();
+  if(!label){ $("colModalMsg").textContent = "Column name is required."; return; }
+  const type = $("c_type").value;
+  const col = {
+    key: "c_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    label, builtin: false, type, visible: true,
+  };
+  if(type === "select"){
+    col.options = $("c_options").value.split("\n").map(s => s.trim()).filter(Boolean);
+    if(!col.options.length){ $("colModalMsg").textContent = "Add at least one dropdown option."; return; }
+  }
+  const cols = effectiveColumns();
+  cols.push(col);
+  $("saveColBtn").disabled = true;
+  try{
+    await saveColumns(cols);
+    $("colOverlay").classList.add("hidden");
+  } finally { $("saveColBtn").disabled = false; }
+};
+
+/* ----- Dropdown values editor ----- */
+function renderOptions(){
+  const opt = effectiveOptions();
+  $("optsBody").innerHTML = OPTION_LISTS.map(([key, label]) => {
+    const chips = opt[key].map((v, i) => `
+      <span class="chip">
+        <span class="chip-label" data-orren="${key}:${i}" title="Click to rename">${esc(v)}</span>
+        <button class="chip-x" data-ordel="${key}:${i}" title="Remove">✕</button>
+      </span>`).join("");
+    return `<div class="opt-group">
+      <div class="opt-head">${esc(label)}</div>
+      <div class="chips">${chips || '<span style="color:var(--muted);font-size:13px">No values yet</span>'}</div>
+      <div class="opt-add">
+        <input type="text" data-orinput="${key}" placeholder="Add a ${esc(label.toLowerCase())} value…" />
+        <button class="btn-secondary" data-oradd="${key}">Add</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  const body = $("optsBody");
+  body.querySelectorAll("[data-oradd]").forEach(b => b.onclick = () => addOption(b.dataset.oradd));
+  body.querySelectorAll("[data-orinput]").forEach(inp => inp.onkeydown = e => {
+    if(e.key === "Enter"){ e.preventDefault(); addOption(inp.dataset.orinput); }
+  });
+  body.querySelectorAll("[data-ordel]").forEach(b => b.onclick = () => {
+    const [key, i] = b.dataset.ordel.split(":"); removeOption(key, +i);
+  });
+  body.querySelectorAll("[data-orren]").forEach(el => el.onclick = () => {
+    const [key, i] = el.dataset.orren.split(":"); renameOption(key, +i);
+  });
+}
+function isReserved(key, v){
+  // "Completed - Remove" is a built-in manager status; don't allow a duplicate.
+  return key === "status" && v === MANAGER_STATUS;
+}
+function addOption(key){
+  const inp = $("optsBody").querySelector(`[data-orinput="${key}"]`);
+  const v = (inp?.value || "").trim();
+  if(!v) return;
+  const lists = currentLists();
+  if(lists[key].some(x => x.toLowerCase() === v.toLowerCase()) || isReserved(key, v)){ if(inp) inp.value = ""; return; }
+  lists[key].push(v);
+  saveOptions(lists);
+}
+function renameOption(key, i){
+  const lists = currentLists();
+  const cur = lists[key][i];
+  if(cur == null) return;
+  const nv = prompt(`Rename "${cur}" to:`, cur);
+  if(nv == null) return;
+  const t = nv.trim();
+  if(!t || isReserved(key, t)) return;
+  if(lists[key].some((x, j) => j !== i && x.toLowerCase() === t.toLowerCase())) return;
+  lists[key][i] = t;
+  saveOptions(lists);
+}
+function removeOption(key, i){
+  const lists = currentLists();
+  if(lists[key][i] == null) return;
+  if(!confirm(`Remove "${lists[key][i]}" from ${key}?`)) return;
+  lists[key].splice(i, 1);
+  saveOptions(lists);
+}
+async function saveOptions(lists){
+  optionsConfig = lists;   // optimistic; the snapshot will confirm
+  renderOptions();
+  try{
+    await setDoc(doc(db, "config", "options"), lists);
+  }catch(e){
+    console.error(e);
+    alert("Could not save dropdown values. Check your Firestore rules allow the manager to write /config/options.");
+  }
 }
 
 /* ====================================================================== */
