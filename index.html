@@ -178,6 +178,7 @@
         <select id="ownerFilter"><option value="">Everyone</option></select>
       </div>
       <div style="flex:1"></div>
+      <button class="btn-secondary" id="exportBtn" style="width:auto">⬇ Download Excel</button>
       <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
       <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
     </div>
@@ -813,26 +814,46 @@ function setActiveTab(v){
 
 /* ---------- Render ---------- */
 $("ownerFilter").onchange = render;
-function render(){
+
+/* The rows currently in view: team owner-filter applied, Completed sunk to bottom.
+   Shared by render() and the Excel export so the download matches the table. */
+function currentRows(){
   const team = currentView === "team";
   let rows = allTasks.slice();
-
   if(team){
-    const names = [...new Set(rows.map(r => r.ownerName).filter(Boolean))].sort();
     const cur = $("ownerFilter").value;
-    $("ownerFilter").innerHTML = '<option value="">Everyone</option>' +
-      names.map(n => `<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("");
     if(cur) rows = rows.filter(r => r.ownerName === cur);
   }
-
-  // Completed tasks sink to the bottom (still fully visible, not removed);
-  // manager-removed ("Completed - Remove") go below those. Everything else newest first.
   const doneRank = s => (s === MANAGER_STATUS ? 2 : (s === "Completed" ? 1 : 0));
   rows.sort((a,b) => {
     const d = doneRank(a.status) - doneRank(b.status);
     if(d !== 0) return d;
     return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
   });
+  return rows;
+}
+
+// Plain-text value of a column for one task (used by the Excel export).
+function cellValue(col, t){
+  if(!col.builtin) return (t.custom && t.custom[col.key]) || "";
+  if(col.key === "status"){
+    const removed = t.status === MANAGER_STATUS;
+    return (currentView !== "team" && removed) ? "Completed" : (t.status || "Pending");
+  }
+  return t[col.key] || "";
+}
+
+function render(){
+  const team = currentView === "team";
+
+  if(team){
+    const names = [...new Set(allTasks.map(r => r.ownerName).filter(Boolean))].sort();
+    const cur = $("ownerFilter").value;
+    $("ownerFilter").innerHTML = '<option value="">Everyone</option>' +
+      names.map(n => `<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("");
+  }
+
+  const rows = currentRows();
 
   // Build the header from the visible columns (Owner first on Team, Actions last).
   const cols = effectiveColumns().filter(c => c.visible);
@@ -916,6 +937,41 @@ function esc(s){ return String(s??"").replace(/[&<>"]/g, c =>
 
 /* ---------- Add / edit modal ---------- */
 $("addBtn").onclick = () => openModal(null);
+
+/* Download the tasks currently in view as a real .xlsx (SheetJS loaded on demand). */
+$("exportBtn").onclick = async () => {
+  const btn = $("exportBtn");
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = "Preparing…";
+  try{
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+    const team = currentView === "team";
+    const rows = currentRows();
+    const cols = effectiveColumns().filter(c => c.visible);
+
+    const header = [];
+    if(team) header.push("Owner");
+    cols.forEach(c => header.push(c.label));
+    const aoa = [header];
+    rows.forEach(t => {
+      const r = [];
+      if(team) r.push(t.ownerName || "");
+      cols.forEach(c => r.push(cellValue(c, t)));
+      aoa.push(r);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Reasonable column widths so it opens tidy in Excel.
+    ws["!cols"] = header.map(h => ({ wch: Math.min(Math.max(h.length + 2, 12), 40) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Tasks");
+    XLSX.writeFile(wb, `tasks-${team ? "team" : "mine"}-${todayISO()}.xlsx`);
+  }catch(e){
+    console.error(e);
+    alert("Could not export to Excel. Check your internet connection (the Excel library loads from a CDN).");
+  }finally{ btn.disabled = false; btn.textContent = prev; }
+};
 
 // Manager clicks "Send updates" -> flush the whole queue now (one digest per person).
 $("sendMailBtn").onclick = async () => {
