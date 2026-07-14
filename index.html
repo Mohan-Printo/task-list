@@ -87,6 +87,8 @@
   .s-Hold{background:#fee2e2;color:#b91c1c}
   .s-Removed{background:#e2e8f0;color:#64748b}
   tr.row-removed{opacity:.55;background:#fafbfc}
+  tr.row-delpending td{background:#fffbeb}
+  .del-pending{font-size:11px;font-weight:700;color:#b45309;margin-bottom:5px;white-space:nowrap}
   .tag-builtin{font-size:10.5px;font-weight:600;color:var(--muted);background:#f1f3f5;
     padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
 
@@ -211,9 +213,10 @@
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
       <b style="color:var(--ink)">Note:</b> This list controls names, roles, who can be assigned tasks,
-      and the person filter. Creating the actual <b>login</b> for a new person is still done once in the
-      Firebase Console (Authentication → Add user), using the same email. "Reset password" emails the person
-      a secure reset link. "Reassign &amp; remove" moves all of a person's tasks to someone else, then
+      and the person filter. <b>Add user</b> now also creates the actual <b>login</b> automatically and emails
+      the person a link to set their own password — no Firebase Console step needed. (This requires
+      Email/Password sign-in to be enabled under Firebase Auth → Sign-in method.) "Reset password" re-sends a
+      secure reset link. "Reassign &amp; remove" moves all of a person's tasks to someone else, then
       deactivates them here — to fully block their login, disable the account in the Console.
     </p>
    </div>
@@ -275,7 +278,16 @@
           <label for="u_email">Email *</label>
           <input id="u_email" type="email" placeholder="priya@printo.in" />
           <div style="font-size:12px;color:var(--muted);margin-top:5px" id="u_emailHint">
-            Must exactly match the login email created in the Firebase Console (lowercase).
+            A login is created automatically. Set a password below, or leave it blank to
+            email them a "set your password" link. Use the person's real email (lowercase).
+          </div>
+        </div>
+        <div class="field full" id="u_passwordField">
+          <label for="u_password">Password</label>
+          <input id="u_password" type="text" autocomplete="new-password"
+                 placeholder="Leave blank to email a set-password link" />
+          <div style="font-size:12px;color:var(--muted);margin-top:5px">
+            At least 6 characters. If set, the person can sign in immediately with it.
           </div>
         </div>
         <div class="field">
@@ -428,11 +440,13 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-         sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+         sendPasswordResetEmail, createUserWithEmailAndPassword }
+         from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, collection, query, where, onSnapshot,
          addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, getDocs,
          writeBatch, serverTimestamp }
          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import emailjs from "https://cdn.jsdelivr.net/npm/@emailjs/browser@4/+esm";
 
 /* ======================================================================
@@ -521,8 +535,35 @@ const BUILTIN_COLUMNS = [
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const functions = getFunctions(app);   // used for the optional delete-login Cloud Function
 const tasksCol = collection(db, "tasks");
 const usersCol = collection(db, "users");
+
+/* Optional: to ALSO delete a person's Firebase LOGIN when you delete them,
+   deploy the Cloud Function in the /functions folder and put its name here.
+   Client SDKs cannot delete another user's login, so this is the only way.
+   Leave "" and Delete just removes them from the directory (login stays until
+   you remove it in the Firebase Console). */
+const AUTH_DELETE_FUNCTION = "";   // e.g. "deleteAuthUser" once deployed
+
+/* Secondary Firebase app used ONLY to create new logins. Creating a user on the
+   primary auth would sign the MANAGER out (Firebase makes the new user "current").
+   Doing it on an isolated second app keeps the manager's session untouched. */
+let _userCreatorAuth = null;
+function userCreatorAuth(){
+  if(!_userCreatorAuth){
+    const secApp = initializeApp(firebaseConfig, "user-creator");
+    _userCreatorAuth = getAuth(secApp);
+  }
+  return _userCreatorAuth;
+}
+// A throwaway password — the person immediately gets a reset email to set their own.
+function tempPassword(){
+  const c = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+  let p = "";
+  for(let i=0;i<18;i++) p += c[Math.floor(Math.random()*c.length)];
+  return p;
+}
 
 // EmailJS is "ready" only once the three IDs above are filled in.
 const emailReady = Object.values(EMAILJS).every(v => v && !v.startsWith("YOUR_"));
@@ -768,17 +809,14 @@ function render(){
     if(cur) rows = rows.filter(r => r.ownerName === cur);
   }
 
-  if(team){
-    // Team view: "Completed - Remove" tasks drop to the bottom; otherwise newest first.
-    rows.sort((a,b) => {
-      const ar = a.status === MANAGER_STATUS ? 1 : 0;
-      const br = b.status === MANAGER_STATUS ? 1 : 0;
-      if(ar !== br) return ar - br;
-      return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
-    });
-  } else {
-    rows.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-  }
+  // Completed tasks sink to the bottom (still fully visible, not removed);
+  // manager-removed ("Completed - Remove") go below those. Everything else newest first.
+  const doneRank = s => (s === MANAGER_STATUS ? 2 : (s === "Completed" ? 1 : 0));
+  rows.sort((a,b) => {
+    const d = doneRank(a.status) - doneRank(b.status);
+    if(d !== 0) return d;
+    return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
+  });
 
   // Build the header from the visible columns (Owner first on Team, Actions last).
   const cols = effectiveColumns().filter(c => c.visible);
@@ -788,6 +826,7 @@ function render(){
   head.push(`<th>Actions</th>`);
   $("taskHead").innerHTML = `<tr>${head.join("")}</tr>`;
 
+  const isManager = currentProfile.role === "manager";
   const body = $("taskBody");
   $("emptyState").classList.toggle("hidden", rows.length !== 0);
   body.innerHTML = rows.map(t => {
@@ -795,21 +834,23 @@ function render(){
     // Member view shows a removed task simply as "Completed"; the Team view keeps
     // the full "Completed - Remove" label and greys the whole row.
     const displayStatus = (!team && removed) ? "Completed" : (t.status || "Pending");
-    const rowCls = (team && removed) ? ' class="row-removed"' : "";
+    const classes = [];
+    if(team && removed) classes.push("row-removed");
+    if(t.deleteRequested) classes.push("row-delpending");
+    const rowCls = classes.length ? ` class="${classes.join(" ")}"` : "";
     const open = expandedRows.has(t.id);
     const cells = [];
     if(team) cells.push(`<td>${esc(t.ownerName||"")}</td>`);
     cols.forEach(c => cells.push(renderCell(c, t, open, displayStatus)));
-    cells.push(
-      `<td><div class="row-actions">
-         <button class="icon-btn" data-edit="${t.id}">Edit</button>
-         <button class="icon-btn del" data-del="${t.id}">Delete</button>
-       </div></td>`);
+    cells.push(renderActions(t, isManager));
     return `<tr${rowCls}>${cells.join("")}</tr>`;
   }).join("");
 
   body.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => openModal(b.dataset.edit));
   body.querySelectorAll("[data-del]").forEach(b => b.onclick = () => removeTask(b.dataset.del));
+  body.querySelectorAll("[data-approvedel]").forEach(b => b.onclick = () => approveDelete(b.dataset.approvedel));
+  body.querySelectorAll("[data-rejectdel]").forEach(b => b.onclick = () => clearDeleteRequest(b.dataset.rejectdel, true));
+  body.querySelectorAll("[data-canceldel]").forEach(b => b.onclick = () => clearDeleteRequest(b.dataset.canceldel, false));
   body.querySelectorAll("[data-exp]").forEach(b => b.onclick = () => {
     const id = b.dataset.exp;
     expandedRows.has(id) ? expandedRows.delete(id) : expandedRows.add(id);
@@ -1049,11 +1090,77 @@ function fireTaskNotification(isCreate, data, changes, isManager){
   }
 }
 
+/* Actions cell — role aware. A member's Delete becomes a request that a manager
+   must approve; a manager deletes directly and approves/rejects members' requests. */
+function renderActions(t, isManager){
+  const pending = t.deleteRequested === true;
+  const btns = [`<button class="icon-btn" data-edit="${t.id}">Edit</button>`];
+  if(pending){
+    if(isManager){
+      btns.push(`<button class="icon-btn del" data-approvedel="${t.id}">Approve delete</button>`);
+      btns.push(`<button class="icon-btn" data-rejectdel="${t.id}">Reject</button>`);
+    } else {
+      btns.push(`<button class="icon-btn" data-canceldel="${t.id}">Cancel request</button>`);
+    }
+  } else {
+    btns.push(`<button class="icon-btn del" data-del="${t.id}">Delete</button>`);
+  }
+  const who = (isManager && t.deleteReqBy) ? ` by ${esc(t.deleteReqBy)}` : "";
+  const flag = pending ? `<div class="del-pending">⏳ Delete requested${who}</div>` : "";
+  return `<td>${flag}<div class="row-actions">${btns.join("")}</div></td>`;
+}
+
+/* Member clicks Delete -> ask a manager to approve. Manager clicks Delete -> delete now. */
 async function removeTask(id){
   const t = allTasks.find(x => x.id===id);
-  if(!confirm(`Delete "${t?.topic||"this task"}"? This cannot be undone.`)) return;
-  try{ await deleteDoc(doc(db,"tasks",id)); }
-  catch(e){ console.error(e); alert("Could not delete the task."); }
+  const isManager = currentProfile.role === "manager";
+  const me = (currentUser.email || "").toLowerCase();
+  if(isManager){
+    if(!confirm(`Delete "${t?.topic||"this task"}"? This cannot be undone.`)) return;
+    try{ await deleteDoc(doc(db,"tasks",id)); }
+    catch(e){ console.error(e); alert("Could not delete the task."); }
+    return;
+  }
+  // Member: raise a deletion request instead of deleting.
+  if(!confirm(`Request deletion of "${t?.topic||"this task"}"?\nA manager must approve before it is removed.`)) return;
+  try{
+    await updateDoc(doc(db,"tasks",id), {
+      deleteRequested: true,
+      deleteReqBy: currentProfile.name,
+      deleteReqByEmail: me,
+    });
+    managerEmails().filter(e => e !== me).forEach(to =>
+      notify(to, getUser(to).name || to, `Deletion requested: ${t?.topic||"task"}`,
+        `${currentProfile.name} requested to delete the task "${t?.topic||"task"}".\n\n`
+        + `Open the Team view to Approve or Reject it.\n\n${taskSummaryText(t||{})}`));
+    alert("Deletion request sent. A manager will review it.");
+  }catch(e){ console.error(e); alert("Could not send the deletion request."); }
+}
+
+/* Manager approves a member's request -> permanently delete + notify the requester. */
+async function approveDelete(id){
+  const t = allTasks.find(x => x.id===id);
+  if(!confirm(`Approve deletion of "${t?.topic||"this task"}"? This permanently removes it.`)) return;
+  const me = (currentUser.email || "").toLowerCase();
+  try{
+    await deleteDoc(doc(db,"tasks",id));
+    if(t?.deleteReqByEmail && t.deleteReqByEmail !== me)
+      notify(t.deleteReqByEmail, t.deleteReqBy || t.deleteReqByEmail, `Task deleted: ${t.topic||"task"}`,
+        `${currentProfile.name} approved your request and deleted the task "${t.topic||"task"}".`);
+  }catch(e){ console.error(e); alert("Could not delete the task."); }
+}
+
+/* Manager rejects (notify=true) or the member cancels their own request (notify=false). */
+async function clearDeleteRequest(id, notifyRequester){
+  const t = allTasks.find(x => x.id===id);
+  const me = (currentUser.email || "").toLowerCase();
+  if(notifyRequester && !confirm(`Reject the deletion request for "${t?.topic||"this task"}"?`)) return;
+  try{
+    await updateDoc(doc(db,"tasks",id), { deleteRequested: false });
+    if(notifyRequester && t?.deleteReqByEmail && t.deleteReqByEmail !== me)
+      notify(t.deleteReqByEmail, t.deleteReqBy || t.deleteReqByEmail, `Deletion rejected: ${t.topic||"task"}`,
+        `${currentProfile.name} rejected the request to delete "${t.topic||"task"}". It stays in your list.`);
+  }catch(e){ console.error(e); alert("Could not update the task."); }
 }
 
 /* ====================================================================== */
@@ -1256,13 +1363,18 @@ function renderUsers(){
       <td><div class="row-actions">
         <button class="icon-btn" data-uedit="${esc(u.email)}">Edit</button>
         <button class="icon-btn" data-ureset="${esc(u.email)}">Reset password</button>
-        <button class="icon-btn del" data-ureassign="${esc(u.email)}" ${isMe ? "disabled title='You cannot remove yourself'" : ""}>Reassign &amp; remove</button>
+        ${inactive
+          ? `<button class="icon-btn" data-ureactivate="${esc(u.email)}">Reactivate</button>`
+          : `<button class="icon-btn" data-ureassign="${esc(u.email)}" ${isMe ? "disabled title='You cannot remove yourself'" : ""}>Reassign &amp; remove</button>`}
+        <button class="icon-btn del" data-udelete="${esc(u.email)}" ${isMe ? "disabled title='You cannot delete yourself'" : ""}>Delete</button>
       </div></td>
     </tr>`;
   }).join("");
   $("userBody").querySelectorAll("[data-uedit]").forEach(b => b.onclick = () => openUserModal(b.dataset.uedit));
   $("userBody").querySelectorAll("[data-ureset]").forEach(b => b.onclick = () => resetUserPassword(b.dataset.ureset));
   $("userBody").querySelectorAll("[data-ureassign]").forEach(b => b.onclick = () => { if(!b.disabled) openReassign(b.dataset.ureassign); });
+  $("userBody").querySelectorAll("[data-ureactivate]").forEach(b => b.onclick = () => reactivateUser(b.dataset.ureactivate));
+  $("userBody").querySelectorAll("[data-udelete]").forEach(b => b.onclick = () => { if(!b.disabled) deleteUser(b.dataset.udelete); });
 }
 
 /* ----- Add / edit user ----- */
@@ -1271,12 +1383,16 @@ $("closeUserModal").onclick = $("cancelUserBtn").onclick = () => $("userOverlay"
 function openUserModal(email){
   editingUserEmail = email;
   $("userModalMsg").textContent = "";
+  $("userModalMsg").className = "msg err";
   const u = email ? getUser(email) : { name:"", role:"member", active:true };
   $("userModalTitle").textContent = email ? "Edit user" : "Add user";
   $("u_name").value  = u.name || "";
   $("u_email").value = email || "";
   $("u_email").disabled = !!email;                 // email is the document id; don't rename
   $("u_emailHint").style.display = email ? "none" : "block";
+  // Password (and its whole field) only apply when creating a NEW login.
+  $("u_password").value = "";
+  $("u_passwordField").style.display = email ? "none" : "block";
   $("u_role").value   = u.role || "member";
   $("u_active").value = String(u.active !== false);
   $("userOverlay").classList.remove("hidden");
@@ -1287,11 +1403,53 @@ $("saveUserBtn").onclick = async () => {
   const email = (editingUserEmail || $("u_email").value.trim()).toLowerCase();
   if(!name){ $("userModalMsg").textContent = "Name is required."; return; }
   if(!email || !email.includes("@")){ $("userModalMsg").textContent = "A valid email is required."; return; }
+  const isNew = !editingUserEmail;
+  const pw = isNew ? $("u_password").value.trim() : "";
+  if(pw && pw.length < 6){ $("userModalMsg").textContent = "Password must be at least 6 characters (or leave it blank)."; return; }
   const data = { name, role: $("u_role").value, active: $("u_active").value === "true" };
+  $("userModalMsg").className = "msg err";
   $("saveUserBtn").disabled = true;
   try{
     await setDoc(doc(usersCol, email), data, { merge: true });
-    $("userOverlay").classList.add("hidden");
+
+    // NEW user: also create the actual login so they can sign in without anyone
+    // touching the Firebase Console. We create it on the secondary app (so the
+    // manager stays signed in). If the manager typed a password, use it and the
+    // person can sign in right away; otherwise email a set-password link.
+    if(isNew){
+      try{
+        const secAuth = userCreatorAuth();
+        await createUserWithEmailAndPassword(secAuth, email, pw || tempPassword());
+        await signOut(secAuth);                     // don't keep the new user session around
+        $("userModalMsg").className = "msg ok";
+        if(pw){
+          $("userModalMsg").textContent = `Login created. ${name} can sign in now with the password you set.`;
+        } else {
+          await sendPasswordResetEmail(auth, email); // they set their own password via email
+          $("userModalMsg").textContent = `Login created. A "set your password" email was sent to ${email}.`;
+        }
+      }catch(authErr){
+        console.error(authErr);
+        const code = authErr.code || "";
+        if(code.includes("email-already-in-use")){
+          // Login already exists (e.g. created earlier / in Console) — that's fine.
+          $("userModalMsg").className = "msg ok";
+          $("userModalMsg").textContent = "Saved. A login already existed for this email — they can sign in as usual.";
+        } else if(code.includes("operation-not-allowed")){
+          $("userModalMsg").textContent = "Saved to the directory, but couldn't create the login: enable Email/Password in Firebase Auth → Sign-in method.";
+        } else if(code.includes("weak-password")){
+          $("userModalMsg").textContent = "Saved, but the login wasn't created (password policy). Try again.";
+        } else {
+          $("userModalMsg").textContent = "Saved to the directory, but the login could not be created automatically. Add it in the Firebase Console.";
+        }
+        return; // keep the modal open so the manager sees the note
+      }
+    } else {
+      $("userOverlay").classList.add("hidden");
+      return;
+    }
+    // Brief pause so the success note is visible, then close.
+    setTimeout(() => $("userOverlay").classList.add("hidden"), 1800);
   }catch(e){
     console.error(e);
     $("userModalMsg").textContent = "Could not save. Check your Firestore rules allow managers to write /users.";
@@ -1307,6 +1465,57 @@ async function resetUserPassword(email){
   }catch(e){
     console.error(e);
     alert("Could not send reset email. Make sure this email has a login in Firebase Authentication.");
+  }
+}
+
+/* ----- Reactivate a previously deactivated user (and confirm/update their name) ----- */
+async function reactivateUser(email){
+  const key = (email || "").toLowerCase();
+  const u = getUser(key);
+  const name = prompt(`Reactivate ${key}.\nConfirm or update the person's name:`, u.name || "");
+  if(name == null) return;                 // cancelled
+  const trimmed = name.trim();
+  if(!trimmed){ alert("A name is required to reactivate."); return; }
+  try{
+    await setDoc(doc(usersCol, key), { active: true, name: trimmed }, { merge: true });
+    // The users snapshot refreshes the list automatically.
+  }catch(e){
+    console.error(e);
+    alert("Could not reactivate the user. Check your Firestore rules allow the manager to write /users.");
+  }
+}
+
+/* ----- Delete a user. If AUTH_DELETE_FUNCTION is set, a Cloud Function removes
+   BOTH the login and the directory doc; otherwise we remove just the directory doc. */
+async function deleteUser(email){
+  const key = (email || "").toLowerCase();
+  const u = getUser(key);
+  const mine = allTasks.filter(t => (t.ownerEmail||"").toLowerCase() === key).length;
+  const fullDelete = !!AUTH_DELETE_FUNCTION;
+  const warn = `Delete ${u.name} (${key})?\n\n`
+    + (mine ? `⚠ They still own ${mine} task(s) — those stay in the database under ${key}. Consider "Reassign & remove" first if you want to move them.\n\n` : "")
+    + (fullDelete
+        ? `This removes their directory entry AND their Firebase login. This cannot be undone.`
+        : `This removes their directory entry only. It does NOT delete their Firebase login — remove that in the Firebase Console (Authentication) to fully block sign-in.`);
+  if(!confirm(warn)) return;
+  try{
+    if(fullDelete){
+      // Cloud Function deletes the Auth user + the /users doc, server-side.
+      await httpsCallable(functions, AUTH_DELETE_FUNCTION)({ email: key });
+    } else {
+      await deleteDoc(doc(usersCol, key));
+    }
+    // The users snapshot refreshes the list automatically.
+  }catch(e){
+    console.error(e);
+    if(fullDelete){
+      // Best effort: at least remove the directory entry so they disappear from the app.
+      try{ await deleteDoc(doc(usersCol, key)); }catch(_){}
+      alert("Removed from the directory, but the Firebase login could not be deleted "
+        + "(the Cloud Function failed or isn't deployed). Check its logs, or delete the login in the Console.");
+    } else {
+      alert("Could not delete the user. Check your Firestore rules allow the manager to delete /users docs.");
+    }
   }
 }
 
