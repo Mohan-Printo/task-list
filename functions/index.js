@@ -13,12 +13,21 @@
  * Then in index.html set:  const AUTH_DELETE_FUNCTION = "deleteAuthUser";
  */
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { defineString, defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
 
 admin.initializeApp();
 
 // Seeded managers (lowercase). Anyone with role "manager" in /users also qualifies.
 const SEED_MANAGERS = ["hamsa.v@printo.in"];
+
+// ---- SMTP config (set these before deploying — see EMAIL.md) ----
+const SMTP_HOST     = defineString("SMTP_HOST");                    // e.g. smtp.gmail.com
+const SMTP_PORT     = defineString("SMTP_PORT", { default: "465" });// 465 (SSL) or 587 (STARTTLS)
+const SMTP_USER     = defineString("SMTP_USER");                    // full mailbox address
+const SMTP_FROM     = defineString("SMTP_FROM", { default: "" });   // optional "From"; defaults to SMTP_USER
+const SMTP_PASSWORD = defineSecret("SMTP_PASSWORD");                // app password / SMTP password (secret)
 
 exports.deleteAuthUser = onCall(async (request) => {
   const caller = (request.auth && request.auth.token && request.auth.token.email || "").toLowerCase();
@@ -50,4 +59,56 @@ exports.deleteAuthUser = onCall(async (request) => {
   await admin.firestore().collection("users").doc(email).delete();
 
   return { ok: true, email };
+});
+
+/**
+ * Callable Cloud Function: sendMail
+ * ---------------------------------
+ * Sends a task-notification email through YOUR SMTP server (nodemailer).
+ * Called by the app's notify() when MAIL_FUNCTION = "sendMail" in index.html.
+ *
+ * Guards against misuse: caller must be signed in, and the recipient must be a
+ * known team member (a /users doc, or a seeded manager) so this can't be used
+ * to send mail to arbitrary addresses.
+ */
+exports.sendMail = onCall({ secrets: [SMTP_PASSWORD] }, async (request) => {
+  const caller = (request.auth && request.auth.token && request.auth.token.email || "").toLowerCase();
+  if (!caller) throw new HttpsError("unauthenticated", "Please sign in.");
+
+  const to = (request.data && request.data.to || "").toLowerCase();
+  const subject = String(request.data && request.data.subject || "").slice(0, 300);
+  const message = String(request.data && request.data.message || "").slice(0, 20000);
+  const toName = String(request.data && request.data.toName || "");
+  const fromName = String(request.data && request.data.fromName || "Team Task List").slice(0, 120);
+  if (!to || !to.includes("@")) throw new HttpsError("invalid-argument", "A valid recipient is required.");
+
+  // Only allow sending to known team members (prevents open-relay abuse).
+  let allowed = SEED_MANAGERS.includes(to);
+  if (!allowed) {
+    const snap = await admin.firestore().collection("users").doc(to).get();
+    allowed = snap.exists;
+  }
+  if (!allowed) throw new HttpsError("permission-denied", "Recipient is not a team member.");
+
+  const port = parseInt(SMTP_PORT.value() || "465", 10);
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST.value(),
+    port,
+    secure: port === 465,                 // 465 = implicit SSL; 587 = STARTTLS
+    auth: { user: SMTP_USER.value(), pass: SMTP_PASSWORD.value() },
+  });
+
+  const from = SMTP_FROM.value() || SMTP_USER.value();
+  try {
+    await transporter.sendMail({
+      from: `"${fromName}" <${from}>`,
+      to: toName ? `"${toName}" <${to}>` : to,
+      subject,
+      text: message,
+    });
+  } catch (e) {
+    console.error("SMTP send failed:", e);
+    throw new HttpsError("internal", "Could not send email: " + e.message);
+  }
+  return { ok: true };
 });

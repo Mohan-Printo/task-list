@@ -178,6 +178,7 @@
         <select id="ownerFilter"><option value="">Everyone</option></select>
       </div>
       <div style="flex:1"></div>
+      <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
       <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
     </div>
 
@@ -546,6 +547,17 @@ const usersCol = collection(db, "users");
    you remove it in the Firebase Console). */
 const AUTH_DELETE_FUNCTION = "";   // e.g. "deleteAuthUser" once deployed
 
+/* Optional: send notification emails through your OWN SMTP instead of EmailJS.
+   Deploy the "sendMail" Cloud Function (see functions/EMAIL.md), set your SMTP
+   secrets, then put its name here. Leave "" to keep using EmailJS. */
+const MAIL_FUNCTION = "";   // e.g. "sendMail" once deployed
+
+/* Batch notifications instead of emailing on every task add/edit. When true, each
+   notification is queued; the manager sends them as one digest with the "Send
+   updates" button (or they auto-send at midnight / next manager login). Set to
+   false to go back to an email per task. */
+const BATCH_NOTIFICATIONS = true;
+
 /* Secondary Firebase app used ONLY to create new logins. Creating a user on the
    primary auth would sign the MANAGER out (Firebase makes the new user "current").
    Doing it on an isolated second app keeps the manager's session untouched. */
@@ -688,6 +700,9 @@ onAuthStateChanged(auth, async user => {
     if(unsubUsers){ unsubUsers(); unsubUsers = null; }
     if(unsubConfig){ unsubConfig(); unsubConfig = null; }
     if(unsubOptions){ unsubOptions(); unsubOptions = null; }
+    if(unsubQueue){ unsubQueue(); unsubQueue = null; }
+    if(midnightTimer){ clearTimeout(midnightTimer); midnightTimer = null; }
+    queueItems = [];
     $("app").classList.add("hidden");
     $("login").classList.remove("hidden");
     $("password").value = "";
@@ -722,6 +737,7 @@ function enterApp(){
   subscribeUsers();
   subscribeConfig();
   subscribeOptions();
+  if(BATCH_NOTIFICATIONS){ subscribeQueue(); scheduleMidnightFlush(); }
 }
 
 function subscribeConfig(){
@@ -900,6 +916,18 @@ function esc(s){ return String(s??"").replace(/[&<>"]/g, c =>
 
 /* ---------- Add / edit modal ---------- */
 $("addBtn").onclick = () => openModal(null);
+
+// Manager clicks "Send updates" -> flush the whole queue now (one digest per person).
+$("sendMailBtn").onclick = async () => {
+  const items = queueItems.slice();
+  if(!items.length) return;
+  const btn = $("sendMailBtn");
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = "Sending…";
+  try{ await flushItems(items); }
+  finally{ btn.disabled = false; btn.textContent = prev; updateSendBtn(); }
+};
 $("closeModal").onclick = $("cancelBtn").onclick = closeModal;
 function openModal(id){
   editingId = id;
@@ -1014,19 +1042,117 @@ $("saveBtn").onclick = async () => {
   } finally { $("saveBtn").disabled = false; }
 };
 
-/* ---------- Email notifications (EmailJS) ---------- */
+/* ---------- Email notifications ----------
+   Uses your own SMTP via the "sendMail" Cloud Function when MAIL_FUNCTION is set;
+   otherwise falls back to EmailJS. Same callers, same content either way. */
 async function notify(toEmail, toName, subject, message){
-  if(!emailReady){ console.warn("EmailJS not configured — skipping email to", toEmail); return; }
-  if(!toEmail) return;
+  if(!toEmail) return false;
+  const fromName = currentProfile?.name || "Team Task List";
+
+  // Preferred path: your own SMTP through the Cloud Function.
+  if(MAIL_FUNCTION){
+    try{
+      await httpsCallable(functions, MAIL_FUNCTION)({ to: toEmail, toName, subject, message, fromName });
+      return true;
+    }catch(e){ console.error("SMTP send failed for", toEmail, e); return false; }
+  }
+
+  // Fallback: EmailJS.
+  if(!emailReady){ console.warn("No email transport configured — skipping email to", toEmail); return false; }
   try{
     await emailjs.send(EMAILJS.serviceId, EMAILJS.templateId, {
       to_email:  toEmail,
       to_name:   toName || toEmail,
       subject,
       message,
-      from_name: currentProfile?.name || "Team Task List",
+      from_name: fromName,
     });
-  }catch(e){ console.error("Email send failed for", toEmail, e); }
+    return true;
+  }catch(e){ console.error("Email send failed for", toEmail, e); return false; }
+}
+// True when SOME email transport is usable (so we don't queue mail that can never send).
+function emailConfigured(){ return !!MAIL_FUNCTION || emailReady; }
+
+/* ---------- Batched notifications (manager-triggered digest + midnight fallback) ----------
+   Instead of emailing on every single task add/edit, each notification is queued in
+   Firestore (collection "mailQueue"). The manager sends them all as one digest per
+   recipient with the "Send updates" button; if forgotten, they auto-send at midnight
+   (when a manager tab is open) or are caught up next time a manager opens the app. */
+const mailQueueCol = collection(db, "mailQueue");
+let queueItems = [], unsubQueue = null, midnightTimer = null, didCatchUp = false;
+
+// Route a notification: queue it in batch mode, or send immediately otherwise.
+function deliver(toEmail, toName, subject, message){
+  if(!toEmail || !emailConfigured()) return;
+  if(BATCH_NOTIFICATIONS) enqueueMail(toEmail, toName, subject, message);
+  else notify(toEmail, toName, subject, message);
+}
+async function enqueueMail(toEmail, toName, subject, message){
+  try{
+    await addDoc(mailQueueCol, {
+      toEmail: toEmail.toLowerCase(), toName: toName || toEmail,
+      subject, message, fromName: currentProfile?.name || "Team Task List",
+      createdAt: serverTimestamp(), sent: false,
+    });
+  }catch(e){ console.error("Could not queue notification", e); }
+}
+
+// Send the given queued items, grouped into ONE digest email per recipient.
+async function flushItems(items){
+  if(!items || !items.length) return;
+  const byTo = {};
+  items.forEach(m => { (byTo[m.toEmail] = byTo[m.toEmail] || []).push(m); });
+  for(const to of Object.keys(byTo)){
+    const list = byTo[to];
+    const toName = list[0].toName || to;
+    const subject = list.length === 1 ? list[0].subject : `Task updates (${list.length})`;
+    const body = list.length === 1 ? list[0].message
+      : `You have ${list.length} task updates:\n\n` + list.map((m,i) => `${i+1}. ${m.message}`).join("\n\n———\n\n");
+    const ok = await notify(to, toName, subject, body);
+    if(ok){
+      const batch = writeBatch(db);
+      list.forEach(m => batch.delete(doc(db, "mailQueue", m.id)));
+      try{ await batch.commit(); }catch(e){ console.error("Could not clear sent queue items", e); }
+    }
+  }
+}
+
+function updateSendBtn(){
+  const btn = $("sendMailBtn");
+  if(!btn) return;
+  const isManager = currentProfile?.role === "manager";
+  const n = queueItems.length;
+  btn.classList.toggle("hidden", !isManager || n === 0);
+  btn.textContent = `✉ Send updates (${n})`;
+}
+
+function subscribeQueue(){
+  if(unsubQueue){ unsubQueue(); unsubQueue = null; }
+  if(currentProfile.role !== "manager") return;   // only managers flush the queue
+  didCatchUp = false;
+  unsubQueue = onSnapshot(query(mailQueueCol, where("sent","==",false)), snap => {
+    queueItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    updateSendBtn();
+    // One-time catch-up: send anything queued before today (a forgotten previous day).
+    if(!didCatchUp){
+      didCatchUp = true;
+      const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+      const stale = queueItems.filter(m => m.createdAt && (m.createdAt.seconds*1000) < startOfToday.getTime());
+      if(stale.length) flushItems(stale);
+    }
+  }, err => console.warn("mailQueue subscribe failed:", err));
+}
+
+// If a manager tab is open at 00:00, send everything still queued, then reschedule.
+function scheduleMidnightFlush(){
+  if(midnightTimer){ clearTimeout(midnightTimer); midnightTimer = null; }
+  if(currentProfile.role !== "manager") return;
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 10); // 00:00:10 next day
+  midnightTimer = setTimeout(async () => {
+    await flushItems(queueItems.slice());
+    scheduleMidnightFlush();
+  }, next - now);
 }
 function managerEmails(){
   return Object.values(directory())
@@ -1069,10 +1195,10 @@ function fireTaskNotification(isCreate, data, changes, isManager){
     if(!to || to === me) return;
     const toName = data.ownerName || getUser(to).name || to;
     if(isCreate){
-      notify(to, toName, `New task assigned: ${topic}`,
+      deliver(to, toName, `New task assigned: ${topic}`,
         `${currentProfile.name} assigned you a new task.\n\n${taskSummaryText(data)}`);
     } else {
-      notify(to, toName, `Task updated: ${topic}`,
+      deliver(to, toName, `Task updated: ${topic}`,
         `${currentProfile.name} updated your task "${topic}".\n\n`
         + (changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
         + taskSummaryText(data));
@@ -1082,7 +1208,7 @@ function fireTaskNotification(isCreate, data, changes, isManager){
     const verb = isCreate ? "created" : "updated";
     managerEmails().filter(e => e !== me).forEach(to => {
       const toName = getUser(to).name || to;
-      notify(to, toName, `Task ${verb} by ${currentProfile.name}: ${topic}`,
+      deliver(to, toName, `Task ${verb} by ${currentProfile.name}: ${topic}`,
         `${currentProfile.name} ${verb} a task.\n\n`
         + (!isCreate && changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
         + taskSummaryText(data));
