@@ -1025,16 +1025,27 @@ $("saveBtn").onclick = async () => {
     data.ownerName  = currentProfile.name;
   }
 
+  const isCreate = !editingId;
+  const oldT = editingId ? (allTasks.find(x => x.id === editingId) || {}) : {};
+  const changes = editingId ? diffSummary(oldT, data) : [];
+
+  // Batch mode: attach the pending notification to the task itself (no extra
+  // Firestore collection/rule needed). The manager's "Send updates" button /
+  // midnight flush reads these and emails one digest per person.
+  if(BATCH_NOTIFICATIONS && emailConfigured()){
+    const n = buildNotify(isCreate, data, changes, isManager);
+    if(n){ data.notifyPending = true; data.notifyAt = serverTimestamp(); data.notify = n; }
+  }
+
   $("saveBtn").disabled = true;
   try{
     if(editingId){
-      const oldT = allTasks.find(x => x.id === editingId) || {};
       await updateDoc(doc(db,"tasks",editingId), data);
-      fireTaskNotification(false, data, diffSummary(oldT, data), isManager);
     } else {
       await addDoc(tasksCol, { ...data, createdAt: serverTimestamp() });
-      fireTaskNotification(true, data, [], isManager);
     }
+    // Non-batch mode sends immediately; batch mode waits for the manager/midnight flush.
+    if(!BATCH_NOTIFICATIONS) fireTaskNotification(isCreate, data, changes, isManager);
     closeModal();
   } catch(e){
     console.error(e);
@@ -1074,34 +1085,52 @@ async function notify(toEmail, toName, subject, message){
 function emailConfigured(){ return !!MAIL_FUNCTION || emailReady; }
 
 /* ---------- Batched notifications (manager-triggered digest + midnight fallback) ----------
-   Instead of emailing on every single task add/edit, each notification is queued in
-   Firestore (collection "mailQueue"). The manager sends them all as one digest per
-   recipient with the "Send updates" button; if forgotten, they auto-send at midnight
-   (when a manager tab is open) or are caught up next time a manager opens the app. */
-const mailQueueCol = collection(db, "mailQueue");
+   To avoid an email per task AND avoid needing a new Firestore collection/rule, the
+   pending notification is stored ON THE TASK itself (fields notifyPending / notify /
+   notifyAt). Managers can already read all tasks and clear these; members can already
+   write their own tasks. The manager sends them as one digest per recipient via the
+   "Send updates" button, or they auto-send at midnight / next manager login. */
 let queueItems = [], unsubQueue = null, midnightTimer = null, didCatchUp = false;
 
-// Route a notification: queue it in batch mode, or send immediately otherwise.
-function deliver(toEmail, toName, subject, message){
-  if(!toEmail || !emailConfigured()) return;
-  if(BATCH_NOTIFICATIONS) enqueueMail(toEmail, toName, subject, message);
-  else notify(toEmail, toName, subject, message);
-}
-async function enqueueMail(toEmail, toName, subject, message){
-  try{
-    await addDoc(mailQueueCol, {
-      toEmail: toEmail.toLowerCase(), toName: toName || toEmail,
-      subject, message, fromName: currentProfile?.name || "Team Task List",
-      createdAt: serverTimestamp(), sent: false,
-    });
-  }catch(e){ console.error("Could not queue notification", e); }
+/* Build the pending-notification payload for a saved task (or null if no one to tell).
+   audience = the assignee's email (manager changed it) OR "managers" (member changed it). */
+function buildNotify(isCreate, data, changes, isManager){
+  if(!isCreate && !changes.length) return null;      // edit that changed nothing -> no email
+  const me = (currentUser.email || "").toLowerCase();
+  const topic = data.topic || "task";
+  if(isManager){
+    const to = (data.ownerEmail || "").toLowerCase();
+    if(!to || to === me) return null;                 // manager owns it -> nobody to email
+    const toName = data.ownerName || getUser(to).name || to;
+    if(isCreate){
+      return { audience: to, toName, subject: `New task assigned: ${topic}`,
+        message: `${currentProfile.name} assigned you a new task.\n\n${taskSummaryText(data)}` };
+    }
+    return { audience: to, toName, subject: `Task updated: ${topic}`,
+      message: `${currentProfile.name} updated your task "${topic}".\n\n`
+        + (changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "") + taskSummaryText(data) };
+  }
+  // Member changed a task -> tell the manager(s).
+  const verb = isCreate ? "created" : "updated";
+  return { audience: "managers", toName: "", subject: `Task ${verb} by ${currentProfile.name}: ${topic}`,
+    message: `${currentProfile.name} ${verb} a task.\n\n`
+      + (!isCreate && changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "") + taskSummaryText(data) };
 }
 
-// Send the given queued items, grouped into ONE digest email per recipient.
+// Send the pending notifications on the given task docs, ONE digest email per recipient.
 async function flushItems(items){
   if(!items || !items.length) return;
   const byTo = {};
-  items.forEach(m => { (byTo[m.toEmail] = byTo[m.toEmail] || []).push(m); });
+  items.forEach(t => {
+    const n = t.notify; if(!n) return;
+    const recips = n.audience === "managers" ? managerEmails() : [n.audience];
+    recips.forEach(r => {
+      const to = (r || "").toLowerCase(); if(!to) return;
+      const toName = n.audience === "managers" ? (getUser(to).name || to) : (n.toName || to);
+      (byTo[to] = byTo[to] || []).push({ toName, subject: n.subject, message: n.message });
+    });
+  });
+  let allOk = true;
   for(const to of Object.keys(byTo)){
     const list = byTo[to];
     const toName = list[0].toName || to;
@@ -1109,11 +1138,15 @@ async function flushItems(items){
     const body = list.length === 1 ? list[0].message
       : `You have ${list.length} task updates:\n\n` + list.map((m,i) => `${i+1}. ${m.message}`).join("\n\n———\n\n");
     const ok = await notify(to, toName, subject, body);
-    if(ok){
-      const batch = writeBatch(db);
-      list.forEach(m => batch.delete(doc(db, "mailQueue", m.id)));
-      try{ await batch.commit(); }catch(e){ console.error("Could not clear sent queue items", e); }
-    }
+    if(!ok) allOk = false;
+  }
+  // Only clear the pending flags if every email went out (else retry on next flush).
+  if(allOk){
+    const batch = writeBatch(db);
+    items.forEach(t => batch.update(doc(db, "tasks", t.id), { notifyPending: false }));
+    try{ await batch.commit(); }catch(e){ console.error("Could not clear pending flags", e); }
+  } else {
+    alert("Some emails could not be sent (check the console / EmailJS). They stay queued and will retry.");
   }
 }
 
@@ -1132,17 +1165,18 @@ function subscribeQueue(){
   if(unsubQueue){ unsubQueue(); unsubQueue = null; }
   if(currentProfile.role !== "manager") return;   // only managers flush the queue
   didCatchUp = false;
-  unsubQueue = onSnapshot(query(mailQueueCol, where("sent","==",false)), snap => {
+  // Read every task with a pending notification (managers may read all tasks).
+  unsubQueue = onSnapshot(query(tasksCol, where("notifyPending","==",true)), snap => {
     queueItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     updateSendBtn();
     // One-time catch-up: send anything queued before today (a forgotten previous day).
     if(!didCatchUp){
       didCatchUp = true;
       const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
-      const stale = queueItems.filter(m => m.createdAt && (m.createdAt.seconds*1000) < startOfToday.getTime());
+      const stale = queueItems.filter(t => t.notifyAt && (t.notifyAt.seconds*1000) < startOfToday.getTime());
       if(stale.length) flushItems(stale);
     }
-  }, err => console.warn("mailQueue subscribe failed:", err));
+  }, err => console.warn("notification queue subscribe failed:", err));
 }
 
 // If a manager tab is open at 00:00, send everything still queued, then reschedule.
@@ -1197,10 +1231,10 @@ function fireTaskNotification(isCreate, data, changes, isManager){
     if(!to || to === me) return;
     const toName = data.ownerName || getUser(to).name || to;
     if(isCreate){
-      deliver(to, toName, `New task assigned: ${topic}`,
+      notify(to, toName, `New task assigned: ${topic}`,
         `${currentProfile.name} assigned you a new task.\n\n${taskSummaryText(data)}`);
     } else {
-      deliver(to, toName, `Task updated: ${topic}`,
+      notify(to, toName, `Task updated: ${topic}`,
         `${currentProfile.name} updated your task "${topic}".\n\n`
         + (changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
         + taskSummaryText(data));
@@ -1210,7 +1244,7 @@ function fireTaskNotification(isCreate, data, changes, isManager){
     const verb = isCreate ? "created" : "updated";
     managerEmails().filter(e => e !== me).forEach(to => {
       const toName = getUser(to).name || to;
-      deliver(to, toName, `Task ${verb} by ${currentProfile.name}: ${topic}`,
+      notify(to, toName, `Task ${verb} by ${currentProfile.name}: ${topic}`,
         `${currentProfile.name} ${verb} a task.\n\n`
         + (!isCreate && changes.length ? `Changes:\n${changes.join("\n")}\n\n` : "")
         + taskSummaryText(data));
