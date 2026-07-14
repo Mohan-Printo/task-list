@@ -737,7 +737,7 @@ function enterApp(){
   subscribeUsers();
   subscribeConfig();
   subscribeOptions();
-  if(BATCH_NOTIFICATIONS){ subscribeQueue(); scheduleMidnightFlush(); }
+  if(BATCH_NOTIFICATIONS){ subscribeQueue(); scheduleMidnightFlush(); updateSendBtn(); }
 }
 
 function subscribeConfig(){
@@ -1122,8 +1122,10 @@ function updateSendBtn(){
   if(!btn) return;
   const isManager = currentProfile?.role === "manager";
   const n = queueItems.length;
-  btn.classList.toggle("hidden", !isManager || n === 0);
-  btn.textContent = `✉ Send updates (${n})`;
+  // Always visible to a manager (so it's easy to find); disabled when nothing is queued.
+  btn.classList.toggle("hidden", !isManager);
+  btn.disabled = n === 0;
+  btn.textContent = n ? `✉ Send updates (${n})` : "✉ No updates to send";
 }
 
 function subscribeQueue(){
