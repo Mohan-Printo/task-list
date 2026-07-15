@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Team Task List</title>
+<style>
+  :root{
+    --ink:#1a1d23; --muted:#6b7280; --line:#e5e7eb; --bg:#f6f7f9; --card:#ffffff;
+    --primary:#2f4b7c; --primary-dark:#26406b; --danger:#b3261e;
+    --st-pending:#4b5563; --st-working:#b45309; --st-phase:#1d4ed8; --st-done:#15803d;
+    --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.5}
+  h1,h2,h3{margin:0}
+  button{font:inherit;cursor:pointer;border:none;border-radius:8px}
+  input,select,textarea{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+  .hidden{display:none !important}
+
+  /* ---- Login ---- */
+  #login{min-height:100vh;display:grid;place-items:center;padding:20px}
+  .login-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:28px;width:100%;max-width:360px}
+  .login-card h1{font-size:20px;margin-bottom:4px}
+  .login-card p.sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+  .btn-primary{background:var(--primary);color:#fff;padding:10px 14px;font-weight:600;width:100%}
+  .btn-primary:hover{background:var(--primary-dark)}
+  .link{background:none;color:var(--primary);padding:0;font-size:13px;text-decoration:underline;width:auto}
+  .msg{font-size:13px;margin-top:12px;min-height:18px}
+  .msg.err{color:var(--danger)} .msg.ok{color:var(--st-done)}
+
+  /* ---- App shell ---- */
+  header{background:#fff;border-bottom:1px solid var(--line);padding:0 20px;
+    display:flex;align-items:center;justify-content:space-between;height:58px;
+    position:sticky;top:0;z-index:10}
+  header .brand{font-size:16px;font-weight:700}
+  header .right{display:flex;align-items:center;gap:14px}
+  header .who{font-size:13px;color:var(--muted)}
+  header .who b{color:var(--ink)}
+  .badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;
+    background:#eef2f8;color:var(--primary);text-transform:uppercase;letter-spacing:.03em}
+  .btn-ghost{background:#fff;border:1px solid var(--line);padding:7px 12px;font-size:13px}
+  .btn-ghost:hover{background:var(--bg)}
+
+  .tabs{display:flex;gap:4px;padding:14px 20px 0;background:#fff;border-bottom:1px solid var(--line);
+    position:sticky;top:58px;z-index:9}
+  .tab{background:none;padding:9px 14px;font-size:14px;font-weight:600;color:var(--muted);
+    border-bottom:2px solid transparent;border-radius:0}
+  .tab.active{color:var(--ink);border-bottom-color:var(--primary)}
+
+  main{max-width:1200px;margin:0 auto;padding:20px}
+  .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .toolbar .filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .toolbar .filter select{width:auto;min-width:150px}
+
+  /* ---- Table ---- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .table-wrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:900px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#fafbfc;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.detail{max-width:280px}
+  td.remarks{max-width:240px;color:var(--muted)}
+  td.detail .cell-text,td.remarks .cell-text{
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+    overflow:hidden;white-space:pre-line}
+  td.detail.open .cell-text,td.remarks.open .cell-text{-webkit-line-clamp:unset;display:block}
+  td.detail.open{min-width:460px;max-width:640px;white-space:normal}
+  td.remarks.open{min-width:420px;max-width:600px;white-space:normal}
+  .expand-toggle{background:none;border:none;padding:2px 0 0;margin-top:2px;
+    color:var(--primary);font-size:12px;font-weight:600;text-decoration:underline;width:auto}
+  .empty{padding:40px 20px;text-align:center;color:var(--muted)}
+  .empty b{display:block;color:var(--ink);margin-bottom:4px}
+
+  .status-pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .s-Pending{background:#f1f3f5;color:var(--st-pending)}
+  .s-Working{background:#fef3c7;color:var(--st-working)}
+  .s-Phase{background:#dbeafe;color:var(--st-phase)}
+  .s-Completed{background:#dcfce7;color:var(--st-done)}
+  .s-Hold{background:#fee2e2;color:#b91c1c}
+  .s-Removed{background:#e2e8f0;color:#64748b}
+  tr.row-removed{opacity:.55;background:#fafbfc}
+  tr.row-delpending td{background:#fffbeb}
+  .del-pending{font-size:11px;font-weight:700;color:#b45309;margin-bottom:5px;white-space:nowrap}
+  .tag-builtin{font-size:10.5px;font-weight:600;color:var(--muted);background:#f1f3f5;
+    padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
+
+  .opt-group{padding:16px 0;border-bottom:1px solid var(--line)}
+  .opt-group:last-child{border-bottom:none}
+  .opt-head{font-size:13px;font-weight:700;margin-bottom:9px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#eef2f8;color:var(--primary);
+    font-size:13px;font-weight:600;padding:4px 6px 4px 11px;border-radius:999px}
+  .chip .chip-label{cursor:pointer}
+  .chip .chip-label:hover{text-decoration:underline}
+  .chip-x{background:rgba(47,75,124,.12);color:var(--primary);border:none;border-radius:999px;
+    width:18px;height:18px;line-height:1;font-size:11px;display:grid;place-items:center;padding:0}
+  .chip-x:hover{background:var(--danger);color:#fff}
+  .opt-add{display:flex;gap:8px;max-width:360px}
+  .opt-add input{flex:1}
+  .opt-add .btn-secondary{white-space:nowrap}
+
+  .row-actions{display:flex;gap:6px;white-space:nowrap}
+  .icon-btn{background:#fff;border:1px solid var(--line);padding:4px 9px;font-size:12px;font-weight:600}
+  .icon-btn:hover{background:var(--bg)}
+  .icon-btn.del{color:var(--danger);border-color:#f0d4d2}
+  .icon-btn.del:hover{background:#fdecea}
+
+  .overlay{position:fixed;inset:0;background:rgba(16,24,40,.45);display:grid;place-items:center;padding:20px;z-index:20}
+  .modal{background:#fff;border-radius:var(--radius);width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 10px 40px rgba(16,24,40,.2)}
+  .modal-head{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .modal-head h2{font-size:17px}
+  .modal-body{padding:22px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid2 .full{grid-column:1/-1}
+  .modal-body .field{margin-bottom:0}
+  .modal-foot{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px}
+  .btn-secondary{background:#fff;border:1px solid var(--line);padding:9px 16px;font-weight:600}
+  .btn-secondary:hover{background:var(--bg)}
+  .modal .btn-primary{width:auto}
+
+  @media (max-width:560px){ .grid2{grid-template-columns:1fr} header .who{display:none} }
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<section id="login">
+  <div class="login-card">
+    <h1>Team Task List</h1>
+    <p class="sub">Sign in to view and manage your tasks.</p>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" placeholder="you@company.com" />
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+    <button class="btn-primary" id="loginBtn">Sign in</button>
+    <div style="margin-top:12px"><button class="link" id="resetBtn">Forgot password?</button></div>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</section>
+
+<!-- ================= APP ================= -->
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">Team Task List</div>
+    <div class="right">
+      <span class="who">Signed in as <b id="userName">—</b></span>
+      <span class="badge" id="userRole">—</span>
+      <button class="btn-ghost" id="logoutBtn">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" id="tabMine" data-view="mine">My tasks</button>
+    <button class="tab hidden" id="tabTeam" data-view="team">Team</button>
+    <button class="tab hidden" id="tabUsers" data-view="users">Users</button>
+    <button class="tab hidden" id="tabSettings" data-view="settings">⚙ Settings</button>
+  </nav>
+
+  <main>
+   <div id="tasksView">
+    <div class="toolbar">
+      <div class="filter" id="teamFilter" style="display:none">
+        Filter by person
+        <select id="ownerFilter"><option value="">Everyone</option></select>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-secondary" id="exportBtn" style="width:auto">⬇ Download Excel</button>
+      <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
+      <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead id="taskHead"></thead>
+          <tbody id="taskBody"></tbody>
+        </table>
+      </div>
+      <div class="empty hidden" id="emptyState">
+        <b>No tasks yet</b>
+        Add your first task with the button above.
+      </div>
+    </div>
+   </div>
+
+   <div id="usersView" class="hidden">
+    <div class="toolbar">
+      <h2 style="font-size:16px">Team members</h2>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="addUserBtn" style="width:auto">+ Add user</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="userBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> This list controls names, roles, who can be assigned tasks,
+      and the person filter. <b>Add user</b> creates the login too: set a password, or leave it blank to
+      email the person a "set your password" link. "Reset password" re-sends that link.
+      "Reassign &amp; remove" moves all of a person's tasks to someone else, then deactivates them.
+      (Email links require SMTP to be configured on the server.)
+    </p>
+   </div>
+
+   <div id="settingsView" class="hidden">
+    <div class="toolbar">
+      <h2 style="font-size:16px">Table columns</h2>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="addColBtn" style="width:auto">+ Add column</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th style="width:90px">Order</th><th>Column</th><th>Type</th><th style="width:70px">Shown</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="colBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> Column layout is shared by everyone. Use ↑/↓ to reorder,
+      the checkbox to show/hide a column, and <b>Add column</b> to create a custom field
+      (Text, Date, or Dropdown) that appears in the table and the task form. Built-in columns can be
+      hidden and renamed but not deleted.
+    </p>
+
+    <div class="toolbar" style="margin-top:28px">
+      <h2 style="font-size:16px">Dropdown values</h2>
+    </div>
+    <div class="card" style="padding:6px 18px 18px">
+      <div id="optsBody"></div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> These are the choices in the task form's dropdowns.
+      Type a value and press <b>Add</b> (or Enter), click a value to rename it, or the <b>✕</b> to remove it.
+      Renaming a value does <b>not</b> change tasks already saved with the old value.
+    </p>
+   </div>
+  </main>
+</div>
+
+<!-- ================= USER MODAL ================= -->
+<div class="overlay hidden" id="userOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2 id="userModalTitle">Add user</h2>
+      <button class="link" id="closeUserModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full">
+          <label for="u_name">Name *</label>
+          <input id="u_name" type="text" placeholder="e.g. Priya" />
+        </div>
+        <div class="field full">
+          <label for="u_email">Email *</label>
+          <input id="u_email" type="email" placeholder="priya@printo.in" />
+          <div style="font-size:12px;color:var(--muted);margin-top:5px" id="u_emailHint">
+            A login is created automatically. Set a password below, or leave it blank to
+            email them a "set your password" link. Use the person's real email (lowercase).
+          </div>
+        </div>
+        <div class="field full" id="u_passwordField">
+          <label for="u_password">Password</label>
+          <input id="u_password" type="text" autocomplete="new-password"
+                 placeholder="Leave blank to email a set-password link" />
+          <div style="font-size:12px;color:var(--muted);margin-top:5px">
+            At least 6 characters. If set, the person can sign in immediately with it.
+          </div>
+        </div>
+        <div class="field">
+          <label for="u_role">Role</label>
+          <select id="u_role"><option value="member">Member</option><option value="manager">Manager</option></select>
+        </div>
+        <div class="field">
+          <label for="u_active">Status</label>
+          <select id="u_active"><option value="true">Active</option><option value="false">Inactive</option></select>
+        </div>
+      </div>
+      <div class="msg err" id="userModalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelUserBtn">Cancel</button>
+      <button class="btn-primary" id="saveUserBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= REASSIGN MODAL ================= -->
+<div class="overlay hidden" id="reassignOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2>Reassign &amp; remove</h2>
+      <button class="link" id="closeReassignModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:14px" id="reassignIntro"></p>
+      <div class="field full">
+        <label for="r_target">Move all their tasks to</label>
+        <select id="r_target"></select>
+      </div>
+      <div class="msg err" id="reassignMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelReassignBtn">Cancel</button>
+      <button class="btn-primary danger-btn" id="confirmReassignBtn"
+        style="background:var(--danger)">Reassign &amp; remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ADD COLUMN MODAL ================= -->
+<div class="overlay hidden" id="colOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2>Add column</h2>
+      <button class="link" id="closeColModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full">
+          <label for="c_label">Column name *</label>
+          <input id="c_label" type="text" placeholder="e.g. Client" />
+        </div>
+        <div class="field full">
+          <label for="c_type">Type</label>
+          <select id="c_type">
+            <option value="text">Text</option>
+            <option value="date">Date</option>
+            <option value="select">Dropdown</option>
+          </select>
+        </div>
+        <div class="field full hidden" id="c_optionsField">
+          <label for="c_options">Dropdown options (one per line)</label>
+          <textarea id="c_options" rows="4" placeholder="North&#10;South&#10;East&#10;West"></textarea>
+        </div>
+      </div>
+      <div class="msg err" id="colModalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelColBtn">Cancel</button>
+      <button class="btn-primary" id="saveColBtn">Add column</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= TASK MODAL ================= -->
+<div class="overlay hidden" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Add task</h2>
+      <button class="link" id="closeModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field full hidden" id="assignField">
+          <label for="f_assignee">Assign to</label>
+          <select id="f_assignee"></select>
+        </div>
+        <div class="field full">
+          <label for="f_topic">Task topic *</label>
+          <input id="f_topic" type="text" placeholder="e.g. Vendor onboarding validation" />
+        </div>
+        <div class="field full">
+          <label for="f_detail">Detailed description</label>
+          <textarea id="f_detail" rows="2" placeholder="What exactly needs doing"></textarea>
+        </div>
+        <div class="field">
+          <label for="f_priority">Priority</label>
+          <select id="f_priority"></select>
+        </div>
+        <div class="field">
+          <label for="f_freq">Frequency</label>
+          <select id="f_freq"></select>
+        </div>
+        <div class="field">
+          <label for="f_status">Status</label>
+          <select id="f_status"></select>
+        </div>
+        <div class="field">
+          <label for="f_assigned">Assigned date</label>
+          <input id="f_assigned" type="date" />
+        </div>
+        <div class="field">
+          <label for="f_comp">Completion date</label>
+          <input id="f_comp" type="date" />
+        </div>
+        <div class="field full">
+          <label for="f_remarks">Remarks</label>
+          <textarea id="f_remarks" rows="2" placeholder="Notes, next steps, blockers"></textarea>
+        </div>
+        <div class="grid2 full" id="customFields" style="gap:14px"></div>
+      </div>
+      <div class="msg err" id="modalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelBtn">Cancel</button>
+      <button class="btn-primary" id="saveBtn">Save task</button>
+    </div>
+  </div>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>
