@@ -37,7 +37,8 @@
 
   /* ---- App shell ---- */
   header{background:#fff;border-bottom:1px solid var(--line);padding:0 20px;
-    display:flex;align-items:center;justify-content:space-between;height:58px}
+    display:flex;align-items:center;justify-content:space-between;height:58px;
+    position:sticky;top:0;z-index:10}
   header .brand{font-size:16px;font-weight:700}
   header .right{display:flex;align-items:center;gap:14px}
   header .who{font-size:13px;color:var(--muted)}
@@ -47,7 +48,8 @@
   .btn-ghost{background:#fff;border:1px solid var(--line);padding:7px 12px;font-size:13px}
   .btn-ghost:hover{background:var(--bg)}
 
-  .tabs{display:flex;gap:4px;padding:14px 20px 0;background:#fff;border-bottom:1px solid var(--line)}
+  .tabs{display:flex;gap:4px;padding:14px 20px 0;background:#fff;border-bottom:1px solid var(--line);
+    position:sticky;top:58px;z-index:9}
   .tab{background:none;padding:9px 14px;font-size:14px;font-weight:600;color:var(--muted);
     border-bottom:2px solid transparent;border-radius:0}
   .tab.active{color:var(--ink);border-bottom-color:var(--primary)}
@@ -390,14 +392,6 @@
           <textarea id="f_detail" rows="2" placeholder="What exactly needs doing"></textarea>
         </div>
         <div class="field">
-          <label for="f_type">Type</label>
-          <select id="f_type">
-            <option value="">—</option>
-            <option>Automation</option><option>Validation</option>
-            <option>Routine</option><option>Analysis</option><option>Other</option>
-          </select>
-        </div>
-        <div class="field">
           <label for="f_priority">Priority</label>
           <select id="f_priority">
             <option value="">—</option>
@@ -525,7 +519,6 @@ const BUILTIN_COLUMNS = [
   { key: "assignedDate", label: "Assigned"  },
   { key: "topic",        label: "Topic"     },
   { key: "detail",       label: "Details"   },
-  { key: "type",         label: "Type"      },
   { key: "frequency",    label: "Frequency" },
   { key: "compDate",     label: "Completed" },
   { key: "status",       label: "Status"    },
@@ -555,7 +548,8 @@ const MAIL_FUNCTION = "";   // e.g. "sendMail" once deployed
 
 /* Batch notifications instead of emailing on every task add/edit. When true, each
    notification is queued; the manager sends them as one digest with the "Send
-   updates" button (or they auto-send at midnight / next manager login). Set to
+   updates" button (or they auto-send overnight via the "sendQueuedNotifications"
+   scheduled Cloud Function, plus a catch-up on the next manager login). Set to
    false to go back to an email per task. */
 const BATCH_NOTIFICATIONS = true;
 
@@ -594,7 +588,6 @@ let optionsConfig = null, unsubOptions = null; // shared dropdown values (config
 /* The four editable dropdown lists (order here = order shown). */
 const OPTION_LISTS = [
   ["priority",  "Priority"],
-  ["type",      "Type"],
   ["status",    "Status"],
   ["frequency", "Frequency"],
 ];
@@ -658,7 +651,6 @@ function fillSelect(id, arr, blankLabel){
   sel.innerHTML = opts;
 }
 fillSelect("f_priority", OPTIONS.priority, "—");
-fillSelect("f_type",     OPTIONS.type,     "—");
 fillSelect("f_status",   OPTIONS.status,   null);
 fillSelect("f_freq",     OPTIONS.frequency, "—");
 
@@ -702,7 +694,6 @@ onAuthStateChanged(auth, async user => {
     if(unsubConfig){ unsubConfig(); unsubConfig = null; }
     if(unsubOptions){ unsubOptions(); unsubOptions = null; }
     if(unsubQueue){ unsubQueue(); unsubQueue = null; }
-    if(midnightTimer){ clearTimeout(midnightTimer); midnightTimer = null; }
     queueItems = [];
     $("app").classList.add("hidden");
     $("login").classList.remove("hidden");
@@ -738,7 +729,7 @@ function enterApp(){
   subscribeUsers();
   subscribeConfig();
   subscribeOptions();
-  if(BATCH_NOTIFICATIONS){ subscribeQueue(); scheduleMidnightFlush(); updateSendBtn(); }
+  if(BATCH_NOTIFICATIONS){ subscribeQueue(); updateSendBtn(); }
 }
 
 function subscribeConfig(){
@@ -1004,7 +995,6 @@ function openModal(id){
   // Fill the dropdowns from the manager-editable values (config/options).
   const opt = effectiveOptions();
   fillSelect("f_priority", opt.priority, "—");
-  fillSelect("f_type",     opt.type,     "—");
   fillSelect("f_freq",     opt.frequency, "—");
   // Status list: managers also get the "Completed - Remove" option.
   const statusList = isManager ? [...opt.status, MANAGER_STATUS] : opt.status;
@@ -1012,7 +1002,6 @@ function openModal(id){
 
   $("f_topic").value    = t.topic || "";
   $("f_detail").value   = t.detail || "";
-  $("f_type").value     = t.type || "";
   $("f_priority").value = t.priority || "";
   $("f_freq").value     = t.frequency || "";
   // A member editing a manager-removed task sees (and would save) plain "Completed".
@@ -1052,7 +1041,6 @@ $("saveBtn").onclick = async () => {
   const data = {
     topic,
     detail:       $("f_detail").value.trim(),
-    type:         $("f_type").value,
     priority:     $("f_priority").value,
     frequency:    $("f_freq").value.trim(),
     status:       $("f_status").value,
@@ -1145,8 +1133,9 @@ function emailConfigured(){ return !!MAIL_FUNCTION || emailReady; }
    pending notification is stored ON THE TASK itself (fields notifyPending / notify /
    notifyAt). Managers can already read all tasks and clear these; members can already
    write their own tasks. The manager sends them as one digest per recipient via the
-   "Send updates" button, or they auto-send at midnight / next manager login. */
-let queueItems = [], unsubQueue = null, midnightTimer = null, didCatchUp = false;
+   "Send updates" button; otherwise the "sendQueuedNotifications" scheduled Cloud
+   Function sends them overnight, with a catch-up on the next manager login. */
+let queueItems = [], unsubQueue = null, didCatchUp = false;
 
 /* Build the pending-notification payload for a saved task (or null if no one to tell).
    audience = the assignee's email (manager changed it) OR "managers" (member changed it). */
@@ -1235,17 +1224,9 @@ function subscribeQueue(){
   }, err => console.warn("notification queue subscribe failed:", err));
 }
 
-// If a manager tab is open at 00:00, send everything still queued, then reschedule.
-function scheduleMidnightFlush(){
-  if(midnightTimer){ clearTimeout(midnightTimer); midnightTimer = null; }
-  if(currentProfile.role !== "manager") return;
-  const now = new Date();
-  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 10); // 00:00:10 next day
-  midnightTimer = setTimeout(async () => {
-    await flushItems(queueItems.slice());
-    scheduleMidnightFlush();
-  }, next - now);
-}
+/* Nightly auto-send now runs server-side (the "sendQueuedNotifications" scheduled
+   Cloud Function), so it works even with no browser tab open. The client keeps the
+   manual "Send updates" button and the login catch-up below as fallbacks. */
 function managerEmails(){
   return Object.values(directory())
     .filter(u => u.role === "manager" && u.active !== false)
@@ -1256,7 +1237,6 @@ function taskSummaryText(d){
     `Topic: ${d.topic || "—"}`,
     `Priority: ${d.priority || "—"}`,
     `Status: ${d.status || "Pending"}`,
-    `Type: ${d.type || "—"}`,
     `Assigned date: ${d.assignedDate || "—"}`,
     `Details: ${d.detail || "—"}`,
     `Remarks: ${d.remarks || "—"}`,
@@ -1264,7 +1244,7 @@ function taskSummaryText(d){
 }
 function diffSummary(oldT, data){
   const fields = [
-    ["topic","Topic"],["detail","Details"],["type","Type"],["priority","Priority"],
+    ["topic","Topic"],["detail","Details"],["priority","Priority"],
     ["frequency","Frequency"],["status","Status"],["assignedDate","Assigned date"],
     ["compDate","Completion date"],["remarks","Remarks"],
   ];

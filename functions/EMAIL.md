@@ -52,6 +52,23 @@ Switching to SMTP does not change *who* gets emailed or *what* it says — only 
 > at myaccount.google.com → Security → App passwords, and use that as `SMTP_PASSWORD`.
 > Daily send limits apply (~2,000/day on Workspace, ~500/day on free Gmail).
 
+## Nightly auto-send (forgotten updates)
+
+The scheduled function **`sendQueuedNotifications`** runs every night at **00:00 India
+time** and emails any batched updates the manager did not send with the "Send updates"
+button. It runs on Google's servers, so it works even when no one is logged in (the old
+browser-tab midnight timer only fired if a manager left the tab open).
+
+- It uses the **same SMTP settings above** — set `SMTP_HOST/PORT/USER/FROM` + the
+  `SMTP_PASSWORD` secret, then `firebase deploy --only functions`. No `index.html`
+  change is needed for the nightly send (it does not depend on `MAIL_FUNCTION`).
+- It groups by recipient the same way the button does: **one email per person**, so 10
+  tasks assigned to one person become a single "Task updates (10)" email.
+- A task's `notifyPending` flag is cleared only once its email is delivered; anything
+  that fails stays queued and retries the next night.
+- Change the time by editing the `schedule` / `timeZone` in `sendQueuedNotifications`.
+- Scheduled functions require the **Blaze plan** (same as above).
+
 ## Notes
 - The function only lets you email **known team members** (someone with a `/users`
   entry, or a seeded manager) — it can't be abused to send to random addresses.
