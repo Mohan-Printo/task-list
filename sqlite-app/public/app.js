@@ -229,6 +229,7 @@ function setActiveTab(v){
   $("settingsView").classList.toggle("hidden", v !== "settings");
   $("linksView").classList.toggle("hidden", v !== "links");
   $("tabActions").classList.toggle("hidden", !isTasks);   // task action buttons only on task views
+  $("personFilter").classList.toggle("hidden", v !== "team");   // quick person picker: Team only
 }
 
 /* ---------- Per-view filter state (My tasks vs Team are independent) ---------- */
@@ -255,6 +256,21 @@ $("searchInput").addEventListener("input", e => { searchTerm = e.target.value.tr
 $("clearFiltersBtn").onclick = () => {
   colFilters = {}; searchTerm = ""; $("searchInput").value = ""; closeFilterPop(); render();
 };
+// Quick person picker (Team view) — a simpler way to filter by owner than the
+// column popover. It just drives the same owner column filter.
+$("ownerSelect").onchange = () => {
+  const v = $("ownerSelect").value;
+  if(v) colFilters["owner"] = new Set([v]);
+  else delete colFilters["owner"];
+  render();
+};
+function populateOwnerSelect(){
+  const names = [...new Set(allTasks.map(r => r.ownerName).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  const sel = colFilters["owner"];
+  const single = (sel && sel.size === 1) ? [...sel][0] : "";
+  $("ownerSelect").innerHTML = '<option value="">Everyone</option>' +
+    names.map(n => `<option ${n===single?"selected":""}>${esc(n)}</option>`).join("");
+}
 
 /* ---------- Render tasks ---------- */
 /* Full searchable text of a task (for the smart search box). */
@@ -314,6 +330,7 @@ function thCell(colKey, label){
 }
 function render(){
   const team = currentView === "team";
+  if(team) populateOwnerSelect();
   const rows = currentRows();
   const cols = effectiveColumns().filter(c => c.visible);
   const head = [];
