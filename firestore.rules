@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Your rule-level manager email(s), lowercase.
+    function isManager() {
+      return request.auth != null
+        && request.auth.token.email in ['hamsa.v@printo.in'];
+    }
+    function signedIn() { return request.auth != null; }
+
+    match /tasks/{id} {
+      allow read, update, delete: if isManager()
+        || (signedIn() && resource.data.ownerEmail == request.auth.token.email);
+      allow create: if isManager()
+        || (signedIn() && request.resource.data.ownerEmail == request.auth.token.email);
+    }
+
+    match /users/{email} {
+      allow read: if signedIn();     // so names/roles resolve for everyone
+      allow write: if isManager();   // only Hamsa edits the directory
+    }
+
+    // Shared app config. Everyone signed in can read it (so the table layout,
+    // dropdown values, and links load for all). The Links board (/config/links)
+    // is writable by anyone signed in; column layout (/config/columns) and
+    // dropdown values (/config/options) stay manager-only.
+    match /config/{docId} {
+      allow read:  if signedIn();
+      allow write: if signedIn() && (docId == 'links' || isManager());
+    }
+  }
+}
