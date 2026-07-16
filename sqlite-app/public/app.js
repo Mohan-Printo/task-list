@@ -97,7 +97,7 @@ async function enterApp(){
   $("tabTeam").classList.toggle("hidden", !isManager);
   $("tabUsers").classList.toggle("hidden", !isManager);
   $("tabSettings").classList.toggle("hidden", !isManager);
-  $("addLinkBtn").classList.toggle("hidden", !isManager);
+  $("addLinkBtn").classList.remove("hidden");   // Links board is open to everyone
   currentType = "all"; searchTerm = ""; colFilters = {};
   $("searchInput").value = "";
   syncSubtabs();
@@ -907,8 +907,8 @@ window.addEventListener("resize", closeFilterPop);
 function linksArray(){ return (linksConfig && Array.isArray(linksConfig.links)) ? linksConfig.links : []; }
 function renderLinks(){
   const links = linksArray();
-  const manager = me && me.role === "manager";
-  $("addLinkBtn").classList.toggle("hidden", !manager);
+  // Shared board: everyone signed in can add / edit / delete links.
+  $("addLinkBtn").classList.remove("hidden");
   $("linksEmpty").classList.toggle("hidden", links.length !== 0);
   $("linkList").innerHTML = links.map((l, i) => `
     <div class="link-row">
@@ -916,10 +916,10 @@ function renderLinks(){
         <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a>
         <span class="lr-url">${esc(l.url)}</span>
       </div>
-      ${manager ? `<div class="row-actions">
+      <div class="row-actions">
         <button class="icon-btn" data-ledit="${i}">Edit</button>
         <button class="icon-btn del" data-ldel="${i}">Delete</button>
-      </div>` : ""}
+      </div>
     </div>`).join("");
   $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(+b.dataset.ledit));
   $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(+b.dataset.ldel));

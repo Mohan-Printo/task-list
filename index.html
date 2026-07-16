@@ -322,8 +322,9 @@
       <div class="empty hidden" id="linksEmpty"><b>No links yet</b>Shared links the team can open live here.</div>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
-      <b style="color:var(--ink)">Note:</b> Shared with everyone. The manager adds a link by pasting the URL and
-      giving it a name. Saving requires your Firestore rules to allow the manager to write <code>/config/links</code>.
+      <b style="color:var(--ink)">Note:</b> Shared with the whole team — anyone signed in can add a link by pasting
+      the URL and giving it a name. Saving requires your Firestore rules to allow signed-in users to
+      read and write <code>/config/links</code>.
     </p>
    </div>
   </main>
@@ -833,7 +834,7 @@ function enterApp(){
   $("tabTeam").classList.toggle("hidden", !isManager);
   $("tabUsers").classList.toggle("hidden", !isManager);
   $("tabSettings").classList.toggle("hidden", !isManager);
-  $("addLinkBtn").classList.toggle("hidden", !isManager);
+  $("addLinkBtn").classList.remove("hidden");   // Links board is open to everyone
 
   currentType = "all"; searchTerm = ""; colFilters = {};
   $("searchInput").value = "";
@@ -2020,8 +2021,8 @@ window.addEventListener("resize", closeFilterPop);
 function linksArray(){ return (linksConfig && Array.isArray(linksConfig.links)) ? linksConfig.links : []; }
 function renderLinks(){
   const links = linksArray();
-  const manager = currentProfile && currentProfile.role === "manager";
-  $("addLinkBtn").classList.toggle("hidden", !manager);
+  // Shared board: everyone signed in can add / edit / delete links.
+  $("addLinkBtn").classList.remove("hidden");
   $("linksEmpty").classList.toggle("hidden", links.length !== 0);
   $("linkList").innerHTML = links.map((l, i) => `
     <div class="link-row">
@@ -2029,10 +2030,10 @@ function renderLinks(){
         <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a>
         <span class="lr-url">${esc(l.url)}</span>
       </div>
-      ${manager ? `<div class="row-actions">
+      <div class="row-actions">
         <button class="icon-btn" data-ledit="${i}">Edit</button>
         <button class="icon-btn del" data-ldel="${i}">Delete</button>
-      </div>` : ""}
+      </div>
     </div>`).join("");
   $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(+b.dataset.ledit));
   $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(+b.dataset.ldel));

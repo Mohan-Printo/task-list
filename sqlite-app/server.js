@@ -376,9 +376,12 @@ app.get("/api/config/:name", requireAuth, (req, res) => {
   res.json({ value: row ? JSON.parse(row.value) : null });
 });
 
-app.put("/api/config/:name", requireAuth, requireManager, (req, res) => {
+app.put("/api/config/:name", requireAuth, (req, res) => {
   const name = req.params.name;
   if (!CONFIG_NAMES.has(name)) return res.status(404).json({ error: "Unknown config." });
+  // columns & options are manager-only; the shared "links" board is open to everyone.
+  if (name !== "links" && req.user.role !== "manager")
+    return res.status(403).json({ error: "Managers only." });
   q.setConfig.run({ name, value: JSON.stringify(req.body.value ?? null) });
   res.json({ ok: true });
 });
