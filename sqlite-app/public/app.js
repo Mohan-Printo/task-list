@@ -224,6 +224,7 @@ function setActiveTab(v){
   $("usersView").classList.toggle("hidden", v !== "users");
   $("settingsView").classList.toggle("hidden", v !== "settings");
   $("linksView").classList.toggle("hidden", v !== "links");
+  $("tabActions").classList.toggle("hidden", !isTasks);   // task action buttons only on task views
 }
 
 /* ---------- Sub-tabs (All / Ad-hoc / Routine) + smart search ---------- */

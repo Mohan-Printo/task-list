@@ -48,11 +48,13 @@
   .btn-ghost{background:#fff;border:1px solid var(--line);padding:7px 12px;font-size:13px}
   .btn-ghost:hover{background:var(--bg)}
 
-  .tabs{display:flex;gap:4px;padding:14px 20px 0;background:#fff;border-bottom:1px solid var(--line);
-    position:sticky;top:58px;z-index:9}
+  .tabs{display:flex;gap:4px;padding:10px 20px 0;background:#fff;border-bottom:1px solid var(--line);
+    position:sticky;top:58px;z-index:9;align-items:flex-end;flex-wrap:wrap}
   .tab{background:none;padding:9px 14px;font-size:14px;font-weight:600;color:var(--muted);
     border-bottom:2px solid transparent;border-radius:0}
   .tab.active{color:var(--ink);border-bottom-color:var(--primary)}
+  /* Action buttons parked in the tab bar (one fixed place, top-right) */
+  .tab-actions{margin-left:auto;display:flex;gap:8px;align-items:center;padding-bottom:8px;flex-wrap:wrap}
 
   /* Secondary sub-tab bar (All / Ad-hoc / Routine) */
   .subtabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
@@ -96,7 +98,7 @@
   .link-row a:hover{text-decoration:underline}
   .link-row .lr-url{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 
-  main{max-width:1200px;margin:0 auto;padding:20px}
+  main{max-width:100%;margin:0 auto;padding:20px}
   .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .toolbar .filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
   .toolbar .filter select{width:auto;min-width:150px}
@@ -211,6 +213,11 @@
     <button class="tab" id="tabLinks" data-view="links">🔗 Links</button>
     <button class="tab hidden" id="tabUsers" data-view="users">Users</button>
     <button class="tab hidden" id="tabSettings" data-view="settings">⚙ Settings</button>
+    <div class="tab-actions" id="tabActions">
+      <button class="btn-secondary" id="exportBtn" style="width:auto">⬇ Download Excel</button>
+      <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
+      <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
+    </div>
   </nav>
 
   <main>
@@ -223,10 +230,6 @@
     <div class="toolbar">
       <div class="search-box"><span class="si">🔍</span><input id="searchInput" type="text" placeholder="Smart search…" /></div>
       <button class="btn-ghost hidden" id="clearFiltersBtn" style="width:auto">Clear filters</button>
-      <div style="flex:1"></div>
-      <button class="btn-secondary" id="exportBtn" style="width:auto">⬇ Download Excel</button>
-      <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
-      <button class="btn-primary" id="addBtn" style="width:auto">+ Add task</button>
     </div>
 
     <div class="card">
