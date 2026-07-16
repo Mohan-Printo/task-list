@@ -8,7 +8,11 @@ const fs = require("fs");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
 
-const DATA_DIR = path.join(__dirname, "data");
+// Where the SQLite file lives. Defaults to ./data locally; on a host like Render
+// set DATA_DIR to a PERSISTENT DISK mount (e.g. /var/data) so data survives deploys.
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, "tasks.sqlite"));

@@ -1,0 +1,50 @@
+# Render Blueprint — deploy this app as a web service with a persistent disk.
+# In Render: New + → "Blueprint" → point it at this repo. Render reads this file.
+# NOTE: a persistent disk (and reliable 24/7 cron) requires a PAID instance
+# (Starter). On the free tier the SQLite file is wiped on every deploy/restart.
+services:
+  - type: web
+    name: team-task-list
+    runtime: node
+    plan: starter                 # paid — needed for the disk below + always-on cron
+    rootDir: sqlite-app           # build/run inside the sqlite-app folder
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    disk:
+      name: data                  # persistent disk that survives deploys/restarts
+      mountPath: /var/data        # matches DATA_DIR below
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATA_DIR
+        value: /var/data
+      - key: SESSION_SECRET
+        generateValue: true       # Render generates a strong random value
+      - key: SECURE_COOKIES
+        value: "true"             # Render serves HTTPS
+      - key: NIGHTLY_CRON
+        value: "0 0 * * *"
+      - key: TZ
+        value: Asia/Kolkata
+      # ---- Set these in the Render dashboard (sync:false = not stored in git) ----
+      - key: APP_URL              # your https://<name>.onrender.com URL (set after 1st deploy)
+        sync: false
+      - key: INITIAL_MANAGER_EMAIL
+        sync: false
+      - key: INITIAL_MANAGER_NAME
+        sync: false
+      - key: INITIAL_MANAGER_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false               # 587 (STARTTLS) or 465 (SSL)
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
