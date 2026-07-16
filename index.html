@@ -990,9 +990,10 @@ function colText(colKey, t){
    applied, Completed sunk to the bottom. Shared by render() and the Excel export. */
 function currentRows(){
   let rows = allTasks.slice();
-  // Sub-tab: show tasks of this type PLUS any with a blank type (older tasks that
-  // predate the Type field appear under both Ad-hoc and Routine).
-  if(currentType !== "all") rows = rows.filter(r => { const ty = (r.type||"").trim(); return ty === currentType || ty === ""; });
+  // Sub-tab: a task is "Routine" only when the word "routine" appears in its Type.
+  // Everything else — "Ad-hoc", blank, "-", or any other value — falls under Ad-hoc.
+  if(currentType === "Routine")     rows = rows.filter(r => (r.type||"").toLowerCase().includes("routine"));
+  else if(currentType === "Ad-hoc") rows = rows.filter(r => !(r.type||"").toLowerCase().includes("routine"));
   if(searchTerm) rows = rows.filter(r => taskSearchText(r).includes(searchTerm));
   for(const key of Object.keys(colFilters)){
     const allowed = colFilters[key];
