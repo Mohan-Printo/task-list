@@ -7,6 +7,7 @@
 /* ---- Defaults (used until/unless a manager overrides them in Settings) ---- */
 const OPTIONS = {
   priority:  ["P0", "P1", "P2", "P3", "P4"],
+  type:      ["Ad-hoc", "Routine"],
   status:    ["Pending", "Working", "Phase 1 completed", "Completed", "On hold"],
   frequency: ["One-time", "Daily", "Weekly", "Bi-weekly", "Monthly", "Quarterly", "Half-yearly", "As needed"],
 };
@@ -15,14 +16,17 @@ const BUILTIN_COLUMNS = [
   { key: "priority",     label: "Priority"  },
   { key: "assignedDate", label: "Assigned"  },
   { key: "topic",        label: "Topic"     },
+  { key: "type",         label: "Type"      },
   { key: "detail",       label: "Details"   },
   { key: "frequency",    label: "Frequency" },
   { key: "compDate",     label: "Completed" },
   { key: "status",       label: "Status"    },
   { key: "remarks",      label: "Remarks"   },
+  { key: "link",         label: "Link"      },
 ];
 const OPTION_LISTS = [
   ["priority",  "Priority"],
+  ["type",      "Type"],
   ["status",    "Status"],
   ["frequency", "Frequency"],
 ];
@@ -31,8 +35,9 @@ const $ = id => document.getElementById(id);
 let me = null;                       // current user { email, name, role, active }
 let allTasks = [], currentView = "mine";
 let usersList = [];                  // directory from /api/users
-let columnConfig = null, optionsConfig = null;
-let editingId = null, editingUserEmail = null, reassignFrom = null;
+let columnConfig = null, optionsConfig = null, linksConfig = null;
+let editingId = null, editingUserEmail = null, reassignFrom = null, editingLinkIdx = null;
+let currentType = "all", searchTerm = "", colFilters = {};
 const expandedRows = new Set();
 let pollTimer = null, tickCount = 0;
 
@@ -92,6 +97,10 @@ async function enterApp(){
   $("tabTeam").classList.toggle("hidden", !isManager);
   $("tabUsers").classList.toggle("hidden", !isManager);
   $("tabSettings").classList.toggle("hidden", !isManager);
+  $("addLinkBtn").classList.toggle("hidden", !isManager);
+  currentType = "all"; searchTerm = ""; colFilters = {};
+  $("searchInput").value = "";
+  syncSubtabs();
   currentView = "mine";
   setActiveTab("mine");
   await Promise.all([loadConfig(), loadUsers()]);
@@ -116,7 +125,7 @@ function startPolling(){
   }, 5000);
 }
 function anyModalOpen(){
-  return ["modalOverlay","userOverlay","reassignOverlay","colOverlay"]
+  return ["modalOverlay","userOverlay","reassignOverlay","colOverlay","linkOverlay"]
     .some(id => !$(id).classList.contains("hidden"));
 }
 
@@ -133,13 +142,16 @@ async function loadUsers(){
   if(currentView === "users") renderUsers();
 }
 async function loadConfig(){
-  const [cols, opts] = await Promise.all([
+  const [cols, opts, links] = await Promise.all([
     api("GET", "/api/config/columns"),
     api("GET", "/api/config/options"),
+    api("GET", "/api/config/links"),
   ]);
   columnConfig = cols.value ? { columns: cols.value } : null;
   optionsConfig = opts.value || null;
+  linksConfig = links.value || null;
   if(currentView === "settings") renderSettings();
+  if(currentView === "links") renderLinks();
 }
 async function refreshPending(){
   try{ const { count } = await api("GET", "/api/notifications/pending"); setSendCount(count); }
@@ -150,11 +162,11 @@ async function refreshPending(){
 function effectiveOptions(){
   const o = optionsConfig || {};
   const pick = k => (Array.isArray(o[k]) && o[k].length) ? o[k] : OPTIONS[k];
-  return { priority: pick("priority"), status: pick("status"), frequency: pick("frequency") };
+  return { priority: pick("priority"), type: pick("type"), status: pick("status"), frequency: pick("frequency") };
 }
 function currentLists(){
   const o = effectiveOptions();
-  return { priority:o.priority.slice(), status:o.status.slice(), frequency:o.frequency.slice() };
+  return { priority:o.priority.slice(), type:o.type.slice(), status:o.status.slice(), frequency:o.frequency.slice() };
 }
 function effectiveColumns(){
   const known = new Set(BUILTIN_COLUMNS.map(c => c.key));
@@ -198,28 +210,64 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = async () => {
   const v = t.dataset.view;
   if(v === currentView) return;
   currentView = v;
+  closeFilterPop();
   setActiveTab(v);
   if(v === "users"){ await loadUsers(); renderUsers(); }
   else if(v === "settings"){ await loadConfig(); renderSettings(); }
+  else if(v === "links"){ await loadConfig(); renderLinks(); }
   else { await loadTasks(); }
 });
 function setActiveTab(v){
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === v));
-  $("tasksView").classList.toggle("hidden", v !== "mine" && v !== "team");
+  const isTasks = (v === "mine" || v === "team");
+  $("tasksView").classList.toggle("hidden", !isTasks);
   $("usersView").classList.toggle("hidden", v !== "users");
   $("settingsView").classList.toggle("hidden", v !== "settings");
-  $("teamFilter").style.display = v === "team" ? "flex" : "none";
+  $("linksView").classList.toggle("hidden", v !== "links");
 }
 
+/* ---------- Sub-tabs (All / Ad-hoc / Routine) + smart search ---------- */
+function syncSubtabs(){
+  document.querySelectorAll("#subtabs .subtab").forEach(b =>
+    b.classList.toggle("active", b.dataset.type === currentType));
+}
+document.querySelectorAll("#subtabs .subtab").forEach(b => b.onclick = () => {
+  currentType = b.dataset.type; syncSubtabs(); closeFilterPop(); render();
+});
+$("searchInput").addEventListener("input", e => { searchTerm = e.target.value.trim().toLowerCase(); render(); });
+$("clearFiltersBtn").onclick = () => {
+  colFilters = {}; searchTerm = ""; $("searchInput").value = ""; closeFilterPop(); render();
+};
+
 /* ---------- Render tasks ---------- */
-$("ownerFilter").onchange = render;
+/* Full searchable text of a task (for the smart search box). */
+function taskSearchText(t){
+  const parts = [t.ownerName, t.topic, t.detail, t.remarks, t.type, t.priority, t.status,
+    t.frequency, t.assignedDate, t.compDate, t.link && t.link.name, t.link && t.link.url];
+  if(t.custom) parts.push(...Object.values(t.custom));
+  return parts.filter(Boolean).join("  ").toLowerCase();
+}
+/* Display text of one column for a task — used by filters, search and export.
+   colKey "owner" is the pseudo-column shown first on the Team view. */
+function colText(colKey, t){
+  if(colKey === "owner") return t.ownerName || "";
+  if(colKey === "link")  return (t.link && t.link.name) || "";
+  const col = effectiveColumns().find(c => c.key === colKey);
+  if(col && !col.builtin) return (t.custom && t.custom[colKey]) || "";
+  if(colKey === "status"){
+    const removed = t.status === MANAGER_STATUS;
+    return (currentView !== "team" && removed) ? "Completed" : (t.status || "Pending");
+  }
+  return t[colKey] || "";
+}
 
 function currentRows(){
-  const team = currentView === "team";
   let rows = allTasks.slice();
-  if(team){
-    const cur = $("ownerFilter").value;
-    if(cur) rows = rows.filter(r => r.ownerName === cur);
+  if(currentType !== "all") rows = rows.filter(r => (r.type || "") === currentType);
+  if(searchTerm) rows = rows.filter(r => taskSearchText(r).includes(searchTerm));
+  for(const key of Object.keys(colFilters)){
+    const allowed = colFilters[key];
+    rows = rows.filter(r => allowed.has(colText(key, r)));
   }
   const doneRank = s => (s === MANAGER_STATUS ? 2 : (s === "Completed" ? 1 : 0));
   rows.sort((a,b) => {
@@ -235,26 +283,38 @@ function cellValue(col, t){
     const removed = t.status === MANAGER_STATUS;
     return (currentView !== "team" && removed) ? "Completed" : (t.status || "Pending");
   }
+  if(col.key === "link") return (t.link && t.link.name) ? (t.link.name + (t.link.url ? ` (${t.link.url})` : "")) : "";
   return t[col.key] || "";
+}
+// One header cell with its Google-Sheets-style filter button.
+function thCell(colKey, label){
+  const active = !!colFilters[colKey];
+  return `<th><div class="th-wrap"><span>${esc(label)}</span>`
+    + `<button class="col-filter ${active?"active":""}" data-fcol="${esc(colKey)}" title="Filter this column">▾</button></div></th>`;
 }
 function render(){
   const team = currentView === "team";
-  if(team){
-    const names = [...new Set(allTasks.map(r => r.ownerName).filter(Boolean))].sort();
-    const cur = $("ownerFilter").value;
-    $("ownerFilter").innerHTML = '<option value="">Everyone</option>' +
-      names.map(n => `<option ${n===cur?"selected":""}>${esc(n)}</option>`).join("");
-  }
   const rows = currentRows();
   const cols = effectiveColumns().filter(c => c.visible);
   const head = [];
-  if(team) head.push(`<th>Owner</th>`);
-  cols.forEach(c => head.push(`<th>${esc(c.label)}</th>`));
+  if(team) head.push(thCell("owner", "Owner"));
+  cols.forEach(c => head.push(thCell(c.key, c.label)));
   head.push(`<th>Actions</th>`);
   $("taskHead").innerHTML = `<tr>${head.join("")}</tr>`;
+  $("taskHead").querySelectorAll("[data-fcol]").forEach(b => b.onclick = ev => {
+    ev.stopPropagation(); openFilterPop(b.dataset.fcol, b);
+  });
+
+  const hasFilters = Object.keys(colFilters).length > 0 || !!searchTerm;
+  $("clearFiltersBtn").classList.toggle("hidden", !hasFilters);
 
   const isManager = me.role === "manager";
   const body = $("taskBody");
+  if(rows.length === 0){
+    $("emptyState").innerHTML = hasFilters
+      ? "<b>No matching tasks</b>Try clearing the search or filters."
+      : "<b>No tasks yet</b>Add your first task with the button above.";
+  }
   $("emptyState").classList.toggle("hidden", rows.length !== 0);
   body.innerHTML = rows.map(t => {
     const removed = t.status === MANAGER_STATUS;
@@ -301,6 +361,12 @@ function renderCell(col, t, open, displayStatus){
     case "remarks": {
       const remarks = t.remarks || "";
       return `<td class="remarks ${open?"open":""}">${remarks ? `<div class="cell-text">${esc(remarks)}</div>` : "—"}</td>`;
+    }
+    case "link": {
+      const l = t.link;
+      if(l && l.url) return `<td><a class="tasklink" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a></td>`;
+      if(l && l.name) return `<td>${esc(l.name)}</td>`;
+      return `<td>—</td>`;
     }
     default: return `<td>${esc(t[col.key] || "—")}</td>`;
   }
@@ -356,12 +422,14 @@ function openModal(id){
 
   const opt = effectiveOptions();
   fillSelect("f_priority", opt.priority, "—");
+  fillSelect("f_type",     opt.type,     "—");
   fillSelect("f_freq",     opt.frequency, "—");
   const statusList = isManager ? [...opt.status, MANAGER_STATUS] : opt.status;
   $("f_status").innerHTML = statusList.map(o => `<option>${esc(o)}</option>`).join("");
 
   $("f_topic").value    = t.topic || "";
   $("f_detail").value   = t.detail || "";
+  $("f_type").value     = t.type || "";
   $("f_priority").value = t.priority || "";
   $("f_freq").value     = t.frequency || "";
   let statusVal = t.status || "Pending";
@@ -370,6 +438,8 @@ function openModal(id){
   $("f_assigned").value = t.assignedDate || (id ? "" : todayISO());
   $("f_comp").value     = t.compDate || "";
   $("f_remarks").value  = t.remarks || "";
+  $("f_linkname").value = (t.link && t.link.name) || "";
+  $("f_linkurl").value  = (t.link && t.link.url)  || "";
 
   const customCols = effectiveColumns().filter(c => !c.builtin);
   $("customFields").innerHTML = customCols.map(c => {
@@ -400,8 +470,12 @@ $("saveBtn").onclick = async () => {
     const v = (el.value || "").trim();
     if(v) custom[el.dataset.cf] = v;
   });
+  let linkUrl    = $("f_linkurl").value.trim();
+  const linkName = $("f_linkname").value.trim();
+  if(linkUrl && !/^https?:\/\//i.test(linkUrl)) linkUrl = "https://" + linkUrl;  // tolerate a bare domain
   const data = {
     topic,
+    type:         $("f_type").value,
     detail:       $("f_detail").value.trim(),
     priority:     $("f_priority").value,
     frequency:    $("f_freq").value.trim(),
@@ -409,6 +483,7 @@ $("saveBtn").onclick = async () => {
     assignedDate: $("f_assigned").value,
     compDate:     $("f_comp").value,
     remarks:      $("f_remarks").value.trim(),
+    link:         linkUrl ? { url: linkUrl, name: linkName || linkUrl } : null,
     custom,
   };
   if(me.role === "manager") data.ownerEmail = $("f_assignee").value.toLowerCase();
@@ -761,6 +836,130 @@ $("confirmReassignBtn").onclick = async () => {
   }catch(e){ $("reassignMsg").textContent = e.message; }
   finally{ $("confirmReassignBtn").disabled = false; }
 };
+
+/* ====================================================================== */
+/* ---------- COLUMN FILTERS (Google-Sheets-style value pickers) ---------- */
+/* ====================================================================== */
+let filterPopEl = null;
+function closeFilterPop(){
+  if(filterPopEl){
+    filterPopEl.remove(); filterPopEl = null;
+    document.removeEventListener("mousedown", onFilterOutside, true);
+  }
+}
+function onFilterOutside(e){
+  if(filterPopEl && !filterPopEl.contains(e.target) &&
+     !(e.target.closest && e.target.closest(".col-filter"))) closeFilterPop();
+}
+function openFilterPop(colKey, anchorEl){
+  if(filterPopEl && filterPopEl.dataset.col === colKey){ closeFilterPop(); return; }
+  closeFilterPop();
+
+  let base = allTasks.slice();
+  if(currentType !== "all") base = base.filter(r => (r.type||"") === currentType);
+  const values = [...new Set(base.map(t => colText(colKey, t)))]
+    .sort((a,b) => String(a).localeCompare(String(b)));
+
+  const sel = colFilters[colKey];              // Set, or undefined = all selected
+  const isChecked = v => !sel || sel.has(v);
+
+  const pop = document.createElement("div");
+  pop.className = "filter-pop";
+  pop.dataset.col = colKey;
+  pop.innerHTML =
+      `<div class="fp-search"><input type="text" placeholder="Search values…" /></div>`
+    + `<div class="fp-actions"><button data-all>Select all</button><button data-none>Clear</button></div>`
+    + `<div class="fp-list">` + values.map((v,i) =>
+        `<label><input type="checkbox" data-i="${i}" ${isChecked(v)?"checked":""}/> <span>${v===""?"(Blank)":esc(v)}</span></label>`
+      ).join("") + `</div>`;
+  document.body.appendChild(pop);
+  filterPopEl = pop;
+
+  const r = anchorEl.getBoundingClientRect(), w = 240;
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + "px";
+  pop.style.top  = (r.bottom + 4) + "px";
+
+  const apply = () => {
+    const boxes = [...pop.querySelectorAll(".fp-list input[type=checkbox]")];
+    const checkedVals = boxes.filter(b => b.checked).map(b => values[+b.dataset.i]);
+    if(checkedVals.length === values.length) delete colFilters[colKey];
+    else colFilters[colKey] = new Set(checkedVals);
+    render();                                   // pop stays (it lives on <body>)
+  };
+  pop.querySelectorAll(".fp-list input[type=checkbox]").forEach(b => b.onchange = apply);
+  pop.querySelector("[data-all]").onclick  = () => { pop.querySelectorAll(".fp-list input").forEach(b => b.checked = true);  apply(); };
+  pop.querySelector("[data-none]").onclick = () => { pop.querySelectorAll(".fp-list input").forEach(b => b.checked = false); apply(); };
+  const search = pop.querySelector(".fp-search input");
+  search.oninput = () => {
+    const q = search.value.trim().toLowerCase();
+    pop.querySelectorAll(".fp-list label").forEach(l =>
+      l.style.display = l.textContent.toLowerCase().includes(q) ? "flex" : "none");
+  };
+  setTimeout(() => document.addEventListener("mousedown", onFilterOutside, true), 0);
+  search.focus();
+}
+window.addEventListener("keydown", e => { if(e.key === "Escape") closeFilterPop(); });
+window.addEventListener("resize", closeFilterPop);
+
+/* ====================================================================== */
+/* ---------- LINKS TAB (shared links board at config/links) ---------- */
+/* ====================================================================== */
+function linksArray(){ return (linksConfig && Array.isArray(linksConfig.links)) ? linksConfig.links : []; }
+function renderLinks(){
+  const links = linksArray();
+  const manager = me && me.role === "manager";
+  $("addLinkBtn").classList.toggle("hidden", !manager);
+  $("linksEmpty").classList.toggle("hidden", links.length !== 0);
+  $("linkList").innerHTML = links.map((l, i) => `
+    <div class="link-row">
+      <div class="lr-main">
+        <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a>
+        <span class="lr-url">${esc(l.url)}</span>
+      </div>
+      ${manager ? `<div class="row-actions">
+        <button class="icon-btn" data-ledit="${i}">Edit</button>
+        <button class="icon-btn del" data-ldel="${i}">Delete</button>
+      </div>` : ""}
+    </div>`).join("");
+  $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(+b.dataset.ledit));
+  $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(+b.dataset.ldel));
+}
+$("addLinkBtn").onclick = () => openLinkModal(null);
+$("closeLinkModal").onclick = $("cancelLinkBtn").onclick = () => $("linkOverlay").classList.add("hidden");
+function openLinkModal(idx){
+  editingLinkIdx = idx;
+  const l = (idx != null) ? (linksArray()[idx] || {name:"",url:""}) : { name:"", url:"" };
+  $("linkModalTitle").textContent = idx != null ? "Edit link" : "Add link";
+  $("l_name").value = l.name || "";
+  $("l_url").value  = l.url || "";
+  $("linkModalMsg").textContent = "";
+  $("linkOverlay").classList.remove("hidden");
+  $("l_name").focus();
+}
+async function saveLinksBoard(links){ await api("PUT", "/api/config/links", { value: { links } }); linksConfig = { links }; }
+$("saveLinkBtn").onclick = async () => {
+  const name = $("l_name").value.trim();
+  let url = $("l_url").value.trim();
+  if(!name){ $("linkModalMsg").textContent = "Name is required."; return; }
+  if(!url){ $("linkModalMsg").textContent = "URL is required."; return; }
+  if(!/^https?:\/\//i.test(url)) url = "https://" + url;   // tolerate a pasted bare domain
+  const links = linksArray().slice();
+  if(editingLinkIdx != null) links[editingLinkIdx] = { name, url };
+  else links.push({ name, url });
+  $("saveLinkBtn").disabled = true;
+  try{ await saveLinksBoard(links); $("linkOverlay").classList.add("hidden"); renderLinks(); }
+  catch(e){ $("linkModalMsg").textContent = e.message; }
+  finally{ $("saveLinkBtn").disabled = false; }
+};
+$("l_url").addEventListener("keydown", e => { if(e.key === "Enter") $("saveLinkBtn").click(); });
+async function deleteLink(idx){
+  const links = linksArray().slice();
+  const l = links[idx]; if(!l) return;
+  if(!confirm(`Remove the link "${l.name || l.url}"?`)) return;
+  links.splice(idx, 1);
+  try{ await saveLinksBoard(links); renderLinks(); }
+  catch(e){ alert(e.message); }
+}
 
 /* ---------- Boot: resume an existing session if there is one ---------- */
 (async function boot(){

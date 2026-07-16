@@ -1217,8 +1217,9 @@ function closeModal(){ $("modalOverlay").classList.add("hidden"); editingId = nu
 $("saveBtn").onclick = async () => {
   const topic = $("f_topic").value.trim();
   if(!topic){ $("modalMsg").textContent = "Task topic is required."; return; }
-  const linkUrl  = $("f_linkurl").value.trim();
+  let linkUrl    = $("f_linkurl").value.trim();
   const linkName = $("f_linkname").value.trim();
+  if(linkUrl && !/^https?:\/\//i.test(linkUrl)) linkUrl = "https://" + linkUrl;  // tolerate a bare domain
   const data = {
     topic,
     detail:       $("f_detail").value.trim(),

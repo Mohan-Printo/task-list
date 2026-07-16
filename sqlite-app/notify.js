@@ -17,20 +17,23 @@ function userName(emailAddr) {
 }
 
 function taskSummaryText(d) {
+  const link = d.link && d.link.url ? `${d.link.name || d.link.url} — ${d.link.url}` : "—";
   return [
     `Topic: ${d.topic || "—"}`,
+    `Type: ${d.type || "—"}`,
     `Priority: ${d.priority || "—"}`,
     `Status: ${d.status || "Pending"}`,
     `Assigned date: ${d.assignedDate || "—"}`,
     `Details: ${d.detail || "—"}`,
     `Remarks: ${d.remarks || "—"}`,
+    `Link: ${link}`,
   ].join("\n");
 }
 
 /* Human-readable list of what changed between the old and new task. */
 function diffSummary(oldT, data) {
   const fields = [
-    ["topic", "Topic"], ["detail", "Details"], ["priority", "Priority"],
+    ["topic", "Topic"], ["type", "Type"], ["detail", "Details"], ["priority", "Priority"],
     ["frequency", "Frequency"], ["status", "Status"], ["assignedDate", "Assigned date"],
     ["compDate", "Completion date"], ["remarks", "Remarks"],
   ];
@@ -39,6 +42,9 @@ function diffSummary(oldT, data) {
     const a = oldT?.[k] || "", b = data[k] || "";
     if (a !== b) lines.push(`• ${label}: "${a || "—"}" → "${b || "—"}"`);
   });
+  const linkStr = l => (l && l.url) ? `${l.name || l.url} (${l.url})` : "";
+  if (linkStr(oldT?.link) !== linkStr(data.link))
+    lines.push(`• Link: "${linkStr(oldT?.link) || "—"}" → "${linkStr(data.link) || "—"}"`);
   if (oldT && data.ownerEmail && (oldT.ownerEmail || "") !== data.ownerEmail)
     lines.push(`• Reassigned to: ${data.ownerName || data.ownerEmail}`);
   return lines;

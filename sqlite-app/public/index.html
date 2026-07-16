@@ -54,6 +54,48 @@
     border-bottom:2px solid transparent;border-radius:0}
   .tab.active{color:var(--ink);border-bottom-color:var(--primary)}
 
+  /* Secondary sub-tab bar (All / Ad-hoc / Routine) */
+  .subtabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .subtab{background:#fff;border:1px solid var(--line);padding:6px 14px;font-size:13px;font-weight:600;
+    color:var(--muted);border-radius:999px}
+  .subtab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+  /* Smart search box */
+  .search-box{position:relative}
+  .search-box input{width:230px;padding-left:30px}
+  .search-box .si{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:13px;opacity:.55;pointer-events:none}
+
+  /* Column filter button inside the table header */
+  th .th-wrap{display:flex;align-items:center;gap:6px;justify-content:space-between}
+  .col-filter{background:none;border:none;padding:1px 3px;font-size:11px;color:#b6bcc6;cursor:pointer;
+    line-height:1;width:auto;border-radius:4px}
+  .col-filter:hover{color:var(--ink);background:#eef2f8}
+  .col-filter.active{color:var(--primary)}
+
+  /* Filter popover (positioned by JS, appended to <body> so it isn't clipped) */
+  .filter-pop{position:fixed;z-index:40;background:#fff;border:1px solid var(--line);border-radius:8px;
+    box-shadow:0 8px 30px rgba(16,24,40,.18);width:240px;max-height:340px;display:flex;flex-direction:column;overflow:hidden}
+  .filter-pop .fp-search{padding:8px;border-bottom:1px solid var(--line)}
+  .filter-pop .fp-search input{padding:6px 9px;font-size:13px}
+  .filter-pop .fp-actions{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
+  .filter-pop .fp-actions button{background:none;border:none;color:var(--primary);font-weight:600;font-size:12px;width:auto;padding:2px 4px}
+  .filter-pop .fp-list{overflow-y:auto;padding:6px 4px}
+  .filter-pop label{display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:13px;font-weight:400;
+    text-transform:none;letter-spacing:0;color:var(--ink);cursor:pointer;border-radius:6px;white-space:normal}
+  .filter-pop label:hover{background:var(--bg)}
+  .filter-pop label input{width:auto;margin:0}
+
+  /* Named links: in a task cell and in the Links tab */
+  td a.tasklink{color:var(--primary);font-weight:600;text-decoration:none}
+  td a.tasklink:hover{text-decoration:underline}
+  .link-list{display:flex;flex-direction:column}
+  .link-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)}
+  .link-row:last-child{border-bottom:none}
+  .link-row .lr-main{flex:1;min-width:0}
+  .link-row a{font-weight:600;color:var(--primary);text-decoration:none}
+  .link-row a:hover{text-decoration:underline}
+  .link-row .lr-url{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+
   main{max-width:1200px;margin:0 auto;padding:20px}
   .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   .toolbar .filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
@@ -166,17 +208,21 @@
   <nav class="tabs">
     <button class="tab active" id="tabMine" data-view="mine">My tasks</button>
     <button class="tab hidden" id="tabTeam" data-view="team">Team</button>
+    <button class="tab" id="tabLinks" data-view="links">🔗 Links</button>
     <button class="tab hidden" id="tabUsers" data-view="users">Users</button>
     <button class="tab hidden" id="tabSettings" data-view="settings">⚙ Settings</button>
   </nav>
 
   <main>
    <div id="tasksView">
+    <div class="subtabs" id="subtabs">
+      <button class="subtab active" data-type="all">All</button>
+      <button class="subtab" data-type="Ad-hoc">Ad-hoc</button>
+      <button class="subtab" data-type="Routine">Routine</button>
+    </div>
     <div class="toolbar">
-      <div class="filter" id="teamFilter" style="display:none">
-        Filter by person
-        <select id="ownerFilter"><option value="">Everyone</option></select>
-      </div>
+      <div class="search-box"><span class="si">🔍</span><input id="searchInput" type="text" placeholder="Smart search…" /></div>
+      <button class="btn-ghost hidden" id="clearFiltersBtn" style="width:auto">Clear filters</button>
       <div style="flex:1"></div>
       <button class="btn-secondary" id="exportBtn" style="width:auto">⬇ Download Excel</button>
       <button class="btn-secondary hidden" id="sendMailBtn" style="width:auto">✉ Send updates (0)</button>
@@ -255,6 +301,22 @@
       <b style="color:var(--ink)">Note:</b> These are the choices in the task form's dropdowns.
       Type a value and press <b>Add</b> (or Enter), click a value to rename it, or the <b>✕</b> to remove it.
       Renaming a value does <b>not</b> change tasks already saved with the old value.
+    </p>
+   </div>
+
+   <div id="linksView" class="hidden">
+    <div class="toolbar">
+      <h2 style="font-size:16px">Links</h2>
+      <div style="flex:1"></div>
+      <button class="btn-primary hidden" id="addLinkBtn" style="width:auto">+ Add link</button>
+    </div>
+    <div class="card" style="padding:6px 18px 18px">
+      <div class="link-list" id="linkList"></div>
+      <div class="empty hidden" id="linksEmpty"><b>No links yet</b>Shared links the team can open live here.</div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
+      <b style="color:var(--ink)">Note:</b> Shared with everyone. The manager adds a link by pasting the URL
+      and giving it a name.
     </p>
    </div>
   </main>
@@ -387,6 +449,10 @@
           <textarea id="f_detail" rows="2" placeholder="What exactly needs doing"></textarea>
         </div>
         <div class="field">
+          <label for="f_type">Type</label>
+          <select id="f_type"></select>
+        </div>
+        <div class="field">
           <label for="f_priority">Priority</label>
           <select id="f_priority"></select>
         </div>
@@ -410,6 +476,14 @@
           <label for="f_remarks">Remarks</label>
           <textarea id="f_remarks" rows="2" placeholder="Notes, next steps, blockers"></textarea>
         </div>
+        <div class="field full">
+          <label for="f_linkurl">Link (optional)</label>
+          <div class="grid2" style="gap:10px">
+            <input id="f_linkname" type="text" placeholder="Link name (e.g. Vendor sheet)" />
+            <input id="f_linkurl" type="url" placeholder="https://…" />
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:5px">Paste the URL and give it a name; it shows as a clickable link in the table.</div>
+        </div>
         <div class="grid2 full" id="customFields" style="gap:14px"></div>
       </div>
       <div class="msg err" id="modalMsg"></div>
@@ -417,6 +491,31 @@
     <div class="modal-foot">
       <button class="btn-secondary" id="cancelBtn">Cancel</button>
       <button class="btn-primary" id="saveBtn">Save task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= LINK MODAL (Links tab) ================= -->
+<div class="overlay hidden" id="linkOverlay">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h2 id="linkModalTitle">Add link</h2>
+      <button class="link" id="closeLinkModal" style="font-size:20px">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field full">
+        <label for="l_name">Name *</label>
+        <input id="l_name" type="text" placeholder="e.g. Vendor onboarding sheet" />
+      </div>
+      <div class="field full" style="margin-top:12px">
+        <label for="l_url">URL *</label>
+        <input id="l_url" type="url" placeholder="https://…" />
+      </div>
+      <div class="msg err" id="linkModalMsg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-secondary" id="cancelLinkBtn">Cancel</button>
+      <button class="btn-primary" id="saveLinkBtn">Save</button>
     </div>
   </div>
 </div>

@@ -216,8 +216,11 @@ app.get("/api/tasks", requireAuth, (req, res) => {
 
 // Shared: assemble the writable fields from the request body for a given actor.
 function readTaskBody(body) {
+  const url = body.link && body.link.url ? String(body.link.url).trim() : "";
+  const linkName = body.link && body.link.name ? String(body.link.name).trim() : "";
   return {
     topic: (body.topic || "").trim(),
+    type: body.type || "",
     detail: (body.detail || "").trim(),
     priority: body.priority || "",
     frequency: (body.frequency || "").trim(),
@@ -225,6 +228,7 @@ function readTaskBody(body) {
     assignedDate: body.assignedDate || "",
     compDate: body.compDate || "",
     remarks: (body.remarks || "").trim(),
+    link: url ? { url, name: linkName || url } : null,
     custom: body.custom && typeof body.custom === "object" ? body.custom : {},
   };
 }
@@ -250,8 +254,9 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   const id = crypto.randomUUID();
   q.insertTask.run({
     id, owner_email: data.ownerEmail, owner_name: data.ownerName, topic: data.topic,
-    detail: data.detail, priority: data.priority, frequency: data.frequency, status: data.status,
+    type: data.type, detail: data.detail, priority: data.priority, frequency: data.frequency, status: data.status,
     assigned_date: data.assignedDate, comp_date: data.compDate, remarks: data.remarks,
+    link_name: data.link ? data.link.name : null, link_url: data.link ? data.link.url : null,
     custom: JSON.stringify(data.custom), created_at: Date.now(),
     notify_pending: n ? 1 : 0, notify_at: n ? Date.now() : null, notify: n ? JSON.stringify(n) : null,
   });
@@ -290,8 +295,9 @@ app.put("/api/tasks/:id", requireAuth, async (req, res) => {
 
   q.updateTask.run({
     id: row.id, owner_email: data.ownerEmail, owner_name: data.ownerName, topic: data.topic,
-    detail: data.detail, priority: data.priority, frequency: data.frequency, status: data.status,
+    type: data.type, detail: data.detail, priority: data.priority, frequency: data.frequency, status: data.status,
     assigned_date: data.assignedDate, comp_date: data.compDate, remarks: data.remarks,
+    link_name: data.link ? data.link.name : null, link_url: data.link ? data.link.url : null,
     custom: JSON.stringify(data.custom), ...nf,
   });
   res.json({ ok: true });
@@ -362,16 +368,17 @@ app.post("/api/notifications/flush", requireAuth, requireManager, async (req, re
 /* ====================================================================== */
 /*  CONFIG (shared columns + dropdown values)                              */
 /* ====================================================================== */
+const CONFIG_NAMES = new Set(["columns", "options", "links"]);
 app.get("/api/config/:name", requireAuth, (req, res) => {
   const name = req.params.name;
-  if (name !== "columns" && name !== "options") return res.status(404).json({ error: "Unknown config." });
+  if (!CONFIG_NAMES.has(name)) return res.status(404).json({ error: "Unknown config." });
   const row = q.getConfig.get(name);
   res.json({ value: row ? JSON.parse(row.value) : null });
 });
 
 app.put("/api/config/:name", requireAuth, requireManager, (req, res) => {
   const name = req.params.name;
-  if (name !== "columns" && name !== "options") return res.status(404).json({ error: "Unknown config." });
+  if (!CONFIG_NAMES.has(name)) return res.status(404).json({ error: "Unknown config." });
   q.setConfig.run({ name, value: JSON.stringify(req.body.value ?? null) });
   res.json({ ok: true });
 });

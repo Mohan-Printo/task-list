@@ -37,6 +37,7 @@ db.exec(`
     owner_email         TEXT NOT NULL,
     owner_name          TEXT,
     topic               TEXT NOT NULL,
+    type                TEXT,                 -- 'Ad-hoc' | 'Routine' | ''
     detail              TEXT,
     priority            TEXT,
     frequency           TEXT,
@@ -44,6 +45,8 @@ db.exec(`
     assigned_date       TEXT,                 -- 'YYYY-MM-DD'
     comp_date           TEXT,
     remarks             TEXT,
+    link_name           TEXT,                 -- named link: display text
+    link_url            TEXT,                 -- named link: URL
     custom              TEXT,                 -- JSON map of custom-column values
     created_at          INTEGER NOT NULL,     -- ms epoch
     delete_requested    INTEGER NOT NULL DEFAULT 0,
@@ -57,10 +60,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_notify ON tasks(notify_pending);
 
   CREATE TABLE IF NOT EXISTS config (
-    name  TEXT PRIMARY KEY,                   -- 'columns' | 'options'
+    name  TEXT PRIMARY KEY,                   -- 'columns' | 'options' | 'links'
     value TEXT NOT NULL                       -- JSON
   );
 `);
+
+/* Forward-migration: add columns that older databases may not have yet. */
+function ensureColumn(table, col, decl){
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if(!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+}
+ensureColumn("tasks", "type", "TEXT");
+ensureColumn("tasks", "link_name", "TEXT");
+ensureColumn("tasks", "link_url", "TEXT");
 
 /* ---- Row <-> API shape helpers -------------------------------------
    The frontend speaks camelCase (like the old Firestore docs); the table
@@ -72,6 +84,7 @@ function taskToApi(r) {
     ownerEmail: r.owner_email,
     ownerName: r.owner_name,
     topic: r.topic,
+    type: r.type || "",
     detail: r.detail || "",
     priority: r.priority || "",
     frequency: r.frequency || "",
@@ -79,6 +92,7 @@ function taskToApi(r) {
     assignedDate: r.assigned_date || "",
     compDate: r.comp_date || "",
     remarks: r.remarks || "",
+    link: r.link_url ? { url: r.link_url, name: r.link_name || r.link_url } : null,
     custom: r.custom ? JSON.parse(r.custom) : {},
     createdAt: r.created_at,
     deleteRequested: !!r.delete_requested,
@@ -117,17 +131,17 @@ const q = {
   tasksByOwner: db.prepare("SELECT * FROM tasks WHERE owner_email = ?"),
   pendingNotifyTasks: db.prepare("SELECT * FROM tasks WHERE notify_pending = 1"),
   insertTask: db.prepare(`INSERT INTO tasks
-    (id, owner_email, owner_name, topic, detail, priority, frequency, status,
-     assigned_date, comp_date, remarks, custom, created_at,
+    (id, owner_email, owner_name, topic, type, detail, priority, frequency, status,
+     assigned_date, comp_date, remarks, link_name, link_url, custom, created_at,
      delete_requested, notify_pending, notify_at, notify)
     VALUES
-    (@id, @owner_email, @owner_name, @topic, @detail, @priority, @frequency, @status,
-     @assigned_date, @comp_date, @remarks, @custom, @created_at,
+    (@id, @owner_email, @owner_name, @topic, @type, @detail, @priority, @frequency, @status,
+     @assigned_date, @comp_date, @remarks, @link_name, @link_url, @custom, @created_at,
      0, @notify_pending, @notify_at, @notify)`),
   updateTask: db.prepare(`UPDATE tasks SET
-     owner_email=@owner_email, owner_name=@owner_name, topic=@topic, detail=@detail,
+     owner_email=@owner_email, owner_name=@owner_name, topic=@topic, type=@type, detail=@detail,
      priority=@priority, frequency=@frequency, status=@status, assigned_date=@assigned_date,
-     comp_date=@comp_date, remarks=@remarks, custom=@custom,
+     comp_date=@comp_date, remarks=@remarks, link_name=@link_name, link_url=@link_url, custom=@custom,
      notify_pending=@notify_pending, notify_at=@notify_at, notify=@notify
      WHERE id=@id`),
   deleteTask: db.prepare("DELETE FROM tasks WHERE id = ?"),
