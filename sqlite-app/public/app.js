@@ -35,8 +35,9 @@ const $ = id => document.getElementById(id);
 let me = null;                       // current user { email, name, role, active }
 let allTasks = [], currentView = "mine";
 let usersList = [];                  // directory from /api/users
-let columnConfig = null, optionsConfig = null, linksConfig = null;
-let editingId = null, editingUserEmail = null, reassignFrom = null, editingLinkIdx = null;
+let columnConfig = null, optionsConfig = null;
+let linksList = [];   // links visible to the current user (from /api/links)
+let editingId = null, editingUserEmail = null, reassignFrom = null, editingLinkId = null;
 let currentType = "all", searchTerm = "", colFilters = {};   // active view's filters
 // My tasks and Team each keep their OWN filters/search/sub-tab, independently.
 let filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
@@ -120,6 +121,7 @@ function startPolling(){
     tickCount++;
     try{
       if(currentView === "mine" || currentView === "team") await loadTasks();
+      else if(currentView === "links") await loadLinks();
       if(tickCount % 4 === 0){ await loadUsers(); await loadConfig(); }
       if(me.role === "manager") await refreshPending();
     }catch(_){ /* transient; next tick retries */ }
@@ -143,15 +145,17 @@ async function loadUsers(){
   if(currentView === "users") renderUsers();
 }
 async function loadConfig(){
-  const [cols, opts, links] = await Promise.all([
+  const [cols, opts] = await Promise.all([
     api("GET", "/api/config/columns"),
     api("GET", "/api/config/options"),
-    api("GET", "/api/config/links"),
   ]);
   columnConfig = cols.value ? { columns: cols.value } : null;
   optionsConfig = opts.value || null;
-  linksConfig = links.value || null;
   if(currentView === "settings") renderSettings();
+}
+async function loadLinks(){
+  const { links } = await api("GET", "/api/links");
+  linksList = links;
   if(currentView === "links") renderLinks();
 }
 async function refreshPending(){
@@ -218,7 +222,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = async () => {
   setActiveTab(v);
   if(v === "users"){ await loadUsers(); renderUsers(); }
   else if(v === "settings"){ await loadConfig(); renderSettings(); }
-  else if(v === "links"){ await loadConfig(); renderLinks(); }
+  else if(v === "links"){ await loadLinks(); }
   else { await loadTasks(); }
 });
 function setActiveTab(v){
@@ -941,60 +945,75 @@ window.addEventListener("resize", closeFilterPop);
 /* ====================================================================== */
 /* ---------- LINKS TAB (shared links board at config/links) ---------- */
 /* ====================================================================== */
-function linksArray(){ return (linksConfig && Array.isArray(linksConfig.links)) ? linksConfig.links : []; }
+function accessLabel(l){
+  const who = l.access === "all" ? "Everyone" : l.access === "users" ? `${(l.users||[]).length} people` : "Private";
+  const mine = l.owner === (me.email||"").toLowerCase();
+  return `${mine ? "You" : esc(l.ownerName)} · ${who}`;
+}
 function renderLinks(){
-  const links = linksArray();
-  // Shared board: everyone signed in can add / edit / delete links.
   $("addLinkBtn").classList.remove("hidden");
-  $("linksEmpty").classList.toggle("hidden", links.length !== 0);
-  $("linkList").innerHTML = links.map((l, i) => `
+  $("linksEmpty").classList.toggle("hidden", linksList.length !== 0);
+  $("linkList").innerHTML = linksList.map(l => `
     <div class="link-row">
       <div class="lr-main">
         <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a>
-        <span class="lr-url">${esc(l.url)}</span>
+        <span class="lr-url">${esc(l.url)} · <span class="lr-meta">${accessLabel(l)}</span></span>
       </div>
-      <div class="row-actions">
-        <button class="icon-btn" data-ledit="${i}">Edit</button>
-        <button class="icon-btn del" data-ldel="${i}">Delete</button>
-      </div>
+      ${l.canManage ? `<div class="row-actions">
+        <button class="icon-btn" data-ledit="${esc(l.id)}">Edit</button>
+        <button class="icon-btn del" data-ldel="${esc(l.id)}">Delete</button>
+      </div>` : ""}
     </div>`).join("");
-  $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(+b.dataset.ledit));
-  $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(+b.dataset.ldel));
+  $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(b.dataset.ledit));
+  $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(b.dataset.ldel));
 }
 $("addLinkBtn").onclick = () => openLinkModal(null);
 $("closeLinkModal").onclick = $("cancelLinkBtn").onclick = () => $("linkOverlay").classList.add("hidden");
-function openLinkModal(idx){
-  editingLinkIdx = idx;
-  const l = (idx != null) ? (linksArray()[idx] || {name:"",url:""}) : { name:"", url:"" };
-  $("linkModalTitle").textContent = idx != null ? "Edit link" : "Add link";
-  $("l_name").value = l.name || "";
-  $("l_url").value  = l.url || "";
+$("l_access").onchange = () => $("l_usersField").classList.toggle("hidden", $("l_access").value !== "users");
+function renderLinkUsers(selected){
+  const sel = new Set((selected||[]).map(x => x.toLowerCase()));
+  const meEmail = (me.email||"").toLowerCase();
+  const others = usersList.filter(u => u.email !== meEmail && u.active !== false);
+  $("l_users").innerHTML = others.length
+    ? others.map(u => `<label><input type="checkbox" value="${esc(u.email)}" ${sel.has(u.email)?"checked":""}/> ${esc(u.name)} <span class="lu-email">${esc(u.email)}</span></label>`).join("")
+    : '<span style="color:var(--muted);font-size:13px">No other users yet.</span>';
+}
+function openLinkModal(id){
+  editingLinkId = id;
+  const l = id ? (linksList.find(x => x.id === id) || {}) : { name:"", url:"", access:"me", users:[] };
+  $("linkModalTitle").textContent = id ? "Edit link" : "Add link";
+  $("l_name").value  = l.name || "";
+  $("l_url").value   = l.url || "";
+  $("l_access").value = l.access || "me";
+  renderLinkUsers(l.users || []);
+  $("l_usersField").classList.toggle("hidden", $("l_access").value !== "users");
   $("linkModalMsg").textContent = "";
   $("linkOverlay").classList.remove("hidden");
   $("l_name").focus();
 }
-async function saveLinksBoard(links){ await api("PUT", "/api/config/links", { value: { links } }); linksConfig = { links }; }
 $("saveLinkBtn").onclick = async () => {
   const name = $("l_name").value.trim();
-  let url = $("l_url").value.trim();
+  const url = $("l_url").value.trim();
   if(!name){ $("linkModalMsg").textContent = "Name is required."; return; }
   if(!url){ $("linkModalMsg").textContent = "URL is required."; return; }
-  if(!/^https?:\/\//i.test(url)) url = "https://" + url;   // tolerate a pasted bare domain
-  const links = linksArray().slice();
-  if(editingLinkIdx != null) links[editingLinkIdx] = { name, url };
-  else links.push({ name, url });
+  const access = $("l_access").value;
+  const users = access === "users"
+    ? [...$("l_users").querySelectorAll("input:checked")].map(c => c.value) : [];
+  const body = { name, url, access, users };
   $("saveLinkBtn").disabled = true;
-  try{ await saveLinksBoard(links); $("linkOverlay").classList.add("hidden"); renderLinks(); }
-  catch(e){ $("linkModalMsg").textContent = e.message; }
+  try{
+    if(editingLinkId) await api("PUT", `/api/links/${editingLinkId}`, body);
+    else              await api("POST", "/api/links", body);
+    $("linkOverlay").classList.add("hidden");
+    await loadLinks();
+  }catch(e){ $("linkModalMsg").textContent = e.message; }
   finally{ $("saveLinkBtn").disabled = false; }
 };
 $("l_url").addEventListener("keydown", e => { if(e.key === "Enter") $("saveLinkBtn").click(); });
-async function deleteLink(idx){
-  const links = linksArray().slice();
-  const l = links[idx]; if(!l) return;
+async function deleteLink(id){
+  const l = linksList.find(x => x.id === id); if(!l) return;
   if(!confirm(`Remove the link "${l.name || l.url}"?`)) return;
-  links.splice(idx, 1);
-  try{ await saveLinksBoard(links); renderLinks(); }
+  try{ await api("DELETE", `/api/links/${id}`); await loadLinks(); }
   catch(e){ alert(e.message); }
 }
 

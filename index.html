@@ -97,6 +97,12 @@
   .link-row a{font-weight:600;color:var(--primary);text-decoration:none}
   .link-row a:hover{text-decoration:underline}
   .link-row .lr-url{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  .link-row .lr-meta{color:var(--primary);font-weight:600}
+  .link-users{max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:6px}
+  .link-users label{display:flex;align-items:center;gap:8px;padding:5px 6px;font-size:13px;font-weight:400;cursor:pointer;border-radius:6px}
+  .link-users label:hover{background:var(--bg)}
+  .link-users label input{width:auto;margin:0}
+  .link-users .lu-email{color:var(--muted);font-size:12px}
 
   main{max-width:100%;margin:0 auto;padding:20px}
   .toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
@@ -328,9 +334,10 @@
       <div class="empty hidden" id="linksEmpty"><b>No links yet</b>Shared links the team can open live here.</div>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6">
-      <b style="color:var(--ink)">Note:</b> Shared with the whole team — anyone signed in can add a link by pasting
-      the URL and giving it a name. Saving requires your Firestore rules to allow signed-in users to
-      read and write <code>/config/links</code>.
+      <b style="color:var(--ink)">Note:</b> Your links are your own. When adding one, choose <b>Who can see this</b> —
+      keep it private, share with everyone, or pick specific people. Only you (or a manager) can edit/delete your links.
+      Saving needs your Firestore rules to allow signed-in users to read and write <code>/config/links</code>.
+      (On this Firebase version "private" hides a link in the app; the self-hosted version enforces it on the server.)
     </p>
    </div>
   </main>
@@ -532,6 +539,18 @@
         <label for="l_url">URL *</label>
         <input id="l_url" type="url" placeholder="https://…" />
       </div>
+      <div class="field full" style="margin-top:12px">
+        <label for="l_access">Who can see this</label>
+        <select id="l_access">
+          <option value="me">Only me (private)</option>
+          <option value="all">Everyone on the team</option>
+          <option value="users">Specific people…</option>
+        </select>
+      </div>
+      <div class="field full hidden" id="l_usersField" style="margin-top:12px">
+        <label>Choose people</label>
+        <div id="l_users" class="link-users"></div>
+      </div>
       <div class="msg err" id="linkModalMsg"></div>
     </div>
     <div class="modal-foot">
@@ -698,7 +717,7 @@ let linksConfig = null, unsubLinks = null;     // shared links board (config/lin
 let currentType = "all";      // sub-tab filter: all | Ad-hoc | Routine  (active view)
 let searchTerm = "";          // smart search box text                   (active view)
 let colFilters = {};          // { columnKey: Set(allowedDisplayValues) } (active view)
-let editingLinkIdx = null;    // index into the links board when editing
+let editingLinkId = null;     // id of the link being edited
 // My tasks and Team each keep their OWN filters/search/sub-tab, so applying a
 // filter on one view never affects the other.
 let filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
@@ -2063,33 +2082,66 @@ window.addEventListener("resize", closeFilterPop);
 /* ---------- LINKS TAB (shared links board at config/links) ---------- */
 /* ====================================================================== */
 function linksArray(){ return (linksConfig && Array.isArray(linksConfig.links)) ? linksConfig.links : []; }
+function myEmailLc(){ return (currentUser.email || "").toLowerCase(); }
+function linkKey(l){ return l.id || (l.name + "||" + l.url); }   // stable key incl. legacy links
+// A link is visible if you own it, it's shared with everyone, it's shared with you,
+// or it's a legacy link with no owner. Private links stay hidden from everyone else
+// (managers included — same privacy for all).
+function canSeeLink(l){
+  const me = myEmailLc();
+  if(!l.owner) return true;
+  if(l.owner === me) return true;
+  if(l.access === "all") return true;
+  if(l.access === "users") return (l.users||[]).map(x => String(x).toLowerCase()).includes(me);
+  return false;
+}
+function canManageLink(l){
+  const me = myEmailLc();
+  return !l.owner || l.owner === me || (currentProfile.role === "manager" && canSeeLink(l));
+}
+function accessLabel(l){
+  const who = l.access === "all" ? "Everyone" : l.access === "users" ? `${(l.users||[]).length} people` : "Private";
+  const mine = !l.owner || l.owner === myEmailLc();
+  return `${mine ? "You" : esc(l.ownerName || l.owner)} · ${who}`;
+}
 function renderLinks(){
-  const links = linksArray();
-  // Shared board: everyone signed in can add / edit / delete links.
+  const links = linksArray().filter(canSeeLink);
   $("addLinkBtn").classList.remove("hidden");
   $("linksEmpty").classList.toggle("hidden", links.length !== 0);
-  $("linkList").innerHTML = links.map((l, i) => `
+  $("linkList").innerHTML = links.map(l => `
     <div class="link-row">
       <div class="lr-main">
         <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.name || l.url)}</a>
-        <span class="lr-url">${esc(l.url)}</span>
+        <span class="lr-url">${esc(l.url)} · <span class="lr-meta">${accessLabel(l)}</span></span>
       </div>
-      <div class="row-actions">
-        <button class="icon-btn" data-ledit="${i}">Edit</button>
-        <button class="icon-btn del" data-ldel="${i}">Delete</button>
-      </div>
+      ${canManageLink(l) ? `<div class="row-actions">
+        <button class="icon-btn" data-ledit="${esc(linkKey(l))}">Edit</button>
+        <button class="icon-btn del" data-ldel="${esc(linkKey(l))}">Delete</button>
+      </div>` : ""}
     </div>`).join("");
-  $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(+b.dataset.ledit));
-  $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(+b.dataset.ldel));
+  $("linkList").querySelectorAll("[data-ledit]").forEach(b => b.onclick = () => openLinkModal(b.dataset.ledit));
+  $("linkList").querySelectorAll("[data-ldel]").forEach(b => b.onclick = () => deleteLink(b.dataset.ldel));
 }
 $("addLinkBtn").onclick = () => openLinkModal(null);
 $("closeLinkModal").onclick = $("cancelLinkBtn").onclick = () => $("linkOverlay").classList.add("hidden");
-function openLinkModal(idx){
-  editingLinkIdx = idx;
-  const l = (idx != null) ? (linksArray()[idx] || {name:"",url:""}) : { name:"", url:"" };
-  $("linkModalTitle").textContent = idx != null ? "Edit link" : "Add link";
-  $("l_name").value = l.name || "";
-  $("l_url").value  = l.url || "";
+$("l_access").onchange = () => $("l_usersField").classList.toggle("hidden", $("l_access").value !== "users");
+function renderLinkUsers(selected){
+  const sel = new Set((selected||[]).map(x => String(x).toLowerCase()));
+  const me = myEmailLc();
+  const others = activeUsers().filter(u => u.email !== me);
+  $("l_users").innerHTML = others.length
+    ? others.map(u => `<label><input type="checkbox" value="${esc(u.email)}" ${sel.has(u.email)?"checked":""}/> ${esc(u.name)} <span class="lu-email">${esc(u.email)}</span></label>`).join("")
+    : '<span style="color:var(--muted);font-size:13px">No other users yet.</span>';
+}
+function openLinkModal(key){
+  editingLinkId = key || null;
+  const l = key ? (linksArray().find(x => linkKey(x) === key) || {}) : { name:"", url:"", access:"me", users:[] };
+  $("linkModalTitle").textContent = key ? "Edit link" : "Add link";
+  $("l_name").value  = l.name || "";
+  $("l_url").value   = l.url || "";
+  $("l_access").value = l.access || "me";
+  renderLinkUsers(l.users || []);
+  $("l_usersField").classList.toggle("hidden", $("l_access").value !== "users");
   $("linkModalMsg").textContent = "";
   $("linkOverlay").classList.remove("hidden");
   $("l_name").focus();
@@ -2100,24 +2152,33 @@ $("saveLinkBtn").onclick = async () => {
   if(!name){ $("linkModalMsg").textContent = "Name is required."; return; }
   if(!url){ $("linkModalMsg").textContent = "URL is required."; return; }
   if(!/^https?:\/\//i.test(url)) url = "https://" + url;   // tolerate a pasted bare domain
+  const access = $("l_access").value;
+  const users = access === "users" ? [...$("l_users").querySelectorAll("input:checked")].map(c => c.value.toLowerCase()) : [];
   const links = linksArray().slice();
-  if(editingLinkIdx != null) links[editingLinkIdx] = { name, url };
-  else links.push({ name, url });
+  if(editingLinkId){
+    const i = links.findIndex(x => linkKey(x) === editingLinkId);
+    if(i >= 0) links[i] = { ...links[i], name, url, access, users };
+  } else {
+    links.push({ id: "l_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      owner: myEmailLc(), ownerName: currentProfile.name, name, url, access, users });
+  }
   $("saveLinkBtn").disabled = true;
   try{
     await setDoc(doc(db, "config", "links"), { links });
     $("linkOverlay").classList.add("hidden");
   }catch(e){
     console.error(e);
-    $("linkModalMsg").textContent = "Could not save. Check your Firestore rules allow the manager to write /config/links.";
+    $("linkModalMsg").textContent = "Could not save. Check your Firestore rules allow signed-in users to write /config/links.";
   }finally{ $("saveLinkBtn").disabled = false; }
 };
 $("l_url").addEventListener("keydown", e => { if(e.key === "Enter") $("saveLinkBtn").click(); });
-async function deleteLink(idx){
+async function deleteLink(key){
   const links = linksArray().slice();
-  const l = links[idx]; if(!l) return;
+  const i = links.findIndex(x => linkKey(x) === key);
+  if(i < 0) return;
+  const l = links[i];
   if(!confirm(`Remove the link "${l.name || l.url}"?`)) return;
-  links.splice(idx, 1);
+  links.splice(i, 1);
   try{ await setDoc(doc(db, "config", "links"), { links }); }
   catch(e){ console.error(e); alert("Could not delete the link. Check your Firestore rules for /config/links."); }
 }

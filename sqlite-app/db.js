@@ -60,9 +60,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_notify ON tasks(notify_pending);
 
   CREATE TABLE IF NOT EXISTS config (
-    name  TEXT PRIMARY KEY,                   -- 'columns' | 'options' | 'links'
+    name  TEXT PRIMARY KEY,                   -- 'columns' | 'options'
     value TEXT NOT NULL                       -- JSON
   );
+
+  CREATE TABLE IF NOT EXISTS links (
+    id          TEXT PRIMARY KEY,
+    owner_email TEXT NOT NULL,
+    owner_name  TEXT,
+    name        TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    access      TEXT NOT NULL DEFAULT 'me',    -- 'me' | 'all' | 'users'
+    shared_with TEXT,                          -- JSON array of emails (access='users')
+    created_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_links_owner ON links(owner_email);
 `);
 
 /* Forward-migration: add columns that older databases may not have yet. */
@@ -113,6 +125,18 @@ function userToApi(r) {
     hasPassword: !!r.password_hash,
   };
 }
+function linkToApi(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    owner: r.owner_email,
+    ownerName: r.owner_name || r.owner_email,
+    name: r.name,
+    url: r.url,
+    access: r.access || "me",
+    users: r.shared_with ? JSON.parse(r.shared_with) : [],
+  };
+}
 
 /* ---- Prepared statements (created lazily, reused) ---- */
 const q = {
@@ -152,6 +176,13 @@ const q = {
   getConfig: db.prepare("SELECT value FROM config WHERE name = ?"),
   setConfig: db.prepare(`INSERT INTO config (name, value) VALUES (@name, @value)
                          ON CONFLICT(name) DO UPDATE SET value=@value`),
+
+  allLinks: db.prepare("SELECT * FROM links ORDER BY created_at DESC"),
+  linkById: db.prepare("SELECT * FROM links WHERE id = ?"),
+  insertLink: db.prepare(`INSERT INTO links (id, owner_email, owner_name, name, url, access, shared_with, created_at)
+    VALUES (@id, @owner_email, @owner_name, @name, @url, @access, @shared_with, @created_at)`),
+  updateLink: db.prepare(`UPDATE links SET name=@name, url=@url, access=@access, shared_with=@shared_with WHERE id=@id`),
+  deleteLink: db.prepare("DELETE FROM links WHERE id = ?"),
 };
 
 /* ---- Seed a first manager if the users table is empty (fresh install) ---- */
@@ -170,4 +201,4 @@ function seedInitialManager({ email, name, password }) {
   return true;
 }
 
-module.exports = { db, q, taskToApi, userToApi, seedInitialManager };
+module.exports = { db, q, taskToApi, userToApi, linkToApi, seedInitialManager };

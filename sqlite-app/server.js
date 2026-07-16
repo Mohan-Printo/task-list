@@ -11,7 +11,7 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const cron = require("node-cron");
 
-const { db, q, taskToApi, userToApi, seedInitialManager } = require("./db");
+const { db, q, taskToApi, userToApi, linkToApi, seedInitialManager } = require("./db");
 const email = require("./email");
 const notify = require("./notify");
 
@@ -368,7 +368,7 @@ app.post("/api/notifications/flush", requireAuth, requireManager, async (req, re
 /* ====================================================================== */
 /*  CONFIG (shared columns + dropdown values)                              */
 /* ====================================================================== */
-const CONFIG_NAMES = new Set(["columns", "options", "links"]);
+const CONFIG_NAMES = new Set(["columns", "options"]);
 app.get("/api/config/:name", requireAuth, (req, res) => {
   const name = req.params.name;
   if (!CONFIG_NAMES.has(name)) return res.status(404).json({ error: "Unknown config." });
@@ -376,13 +376,71 @@ app.get("/api/config/:name", requireAuth, (req, res) => {
   res.json({ value: row ? JSON.parse(row.value) : null });
 });
 
-app.put("/api/config/:name", requireAuth, (req, res) => {
+app.put("/api/config/:name", requireAuth, requireManager, (req, res) => {
   const name = req.params.name;
   if (!CONFIG_NAMES.has(name)) return res.status(404).json({ error: "Unknown config." });
-  // columns & options are manager-only; the shared "links" board is open to everyone.
-  if (name !== "links" && req.user.role !== "manager")
-    return res.status(403).json({ error: "Managers only." });
   q.setConfig.run({ name, value: JSON.stringify(req.body.value ?? null) });
+  res.json({ ok: true });
+});
+
+/* ====================================================================== */
+/*  LINKS (per-user, with access control)                                  */
+/* ====================================================================== */
+function canSeeLink(row, me) {
+  if (row.owner_email === me) return true;
+  if (row.access === "all") return true;
+  if (row.access === "users") {
+    const list = row.shared_with ? JSON.parse(row.shared_with) : [];
+    return list.map(x => String(x).toLowerCase()).includes(me);
+  }
+  return false;   // 'me' = private to its owner
+}
+function readLinkBody(body) {
+  const name = (body.name || "").trim();
+  let url = (body.url || "").trim();
+  if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+  const access = ["me", "all", "users"].includes(body.access) ? body.access : "me";
+  const users = access === "users" && Array.isArray(body.users)
+    ? [...new Set(body.users.map(u => String(u).toLowerCase()).filter(Boolean))] : [];
+  return { name, url, access, users };
+}
+
+app.get("/api/links", requireAuth, (req, res) => {
+  const me = req.user.email;
+  const rows = q.allLinks.all().filter(r => canSeeLink(r, me));
+  res.json({ links: rows.map(r => ({
+    ...linkToApi(r),
+    canManage: r.owner_email === me || req.user.role === "manager",
+  })) });
+});
+
+app.post("/api/links", requireAuth, (req, res) => {
+  const { name, url, access, users } = readLinkBody(req.body);
+  if (!name || !url) return res.status(400).json({ error: "Name and URL are required." });
+  q.insertLink.run({
+    id: crypto.randomUUID(), owner_email: req.user.email, owner_name: req.user.name,
+    name, url, access, shared_with: JSON.stringify(users), created_at: Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+app.put("/api/links/:id", requireAuth, (req, res) => {
+  const row = q.linkById.get(req.params.id);
+  if (!row) return res.status(404).json({ error: "Link not found." });
+  if (row.owner_email !== req.user.email && req.user.role !== "manager")
+    return res.status(403).json({ error: "You can only edit your own links." });
+  const { name, url, access, users } = readLinkBody(req.body);
+  if (!name || !url) return res.status(400).json({ error: "Name and URL are required." });
+  q.updateLink.run({ id: row.id, name, url, access, shared_with: JSON.stringify(users) });
+  res.json({ ok: true });
+});
+
+app.delete("/api/links/:id", requireAuth, (req, res) => {
+  const row = q.linkById.get(req.params.id);
+  if (!row) return res.status(404).json({ error: "Link not found." });
+  if (row.owner_email !== req.user.email && req.user.role !== "manager")
+    return res.status(403).json({ error: "You can only delete your own links." });
+  q.deleteLink.run(row.id);
   res.json({ ok: true });
 });
 
