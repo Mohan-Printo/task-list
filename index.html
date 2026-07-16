@@ -692,10 +692,13 @@ let unsubUsers = null, editingUserEmail = null, reassignFrom = null;
 let columnConfig = null, unsubConfig = null;   // shared column layout (config/columns doc)
 let optionsConfig = null, unsubOptions = null; // shared dropdown values (config/options doc)
 let linksConfig = null, unsubLinks = null;     // shared links board (config/links doc)
-let currentType = "all";      // sub-tab filter: all | Ad-hoc | Routine
-let searchTerm = "";          // smart search box text
-let colFilters = {};          // { columnKey: Set(allowedDisplayValues) } — Google-Sheets-style filters
+let currentType = "all";      // sub-tab filter: all | Ad-hoc | Routine  (active view)
+let searchTerm = "";          // smart search box text                   (active view)
+let colFilters = {};          // { columnKey: Set(allowedDisplayValues) } (active view)
 let editingLinkIdx = null;    // index into the links board when editing
+// My tasks and Team each keep their OWN filters/search/sub-tab, so applying a
+// filter on one view never affects the other.
+let filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
 
 /* The four editable dropdown lists (order here = order shown). */
 const OPTION_LISTS = [
@@ -839,9 +842,8 @@ function enterApp(){
   $("tabSettings").classList.toggle("hidden", !isManager);
   $("addLinkBtn").classList.remove("hidden");   // Links board is open to everyone
 
-  currentType = "all"; searchTerm = ""; colFilters = {};
-  $("searchInput").value = "";
-  syncSubtabs();
+  filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
+  loadViewFilters("mine");
   currentView = "mine";
   setActiveTab("mine");
   subscribe();
@@ -916,8 +918,11 @@ function subscribe(){
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   const v = t.dataset.view;
   if(v === currentView) return;
+  const prev = currentView;
   currentView = v;
   closeFilterPop();
+  saveViewFilters(prev);              // remember the view we're leaving
+  if(v === "mine" || v === "team") loadViewFilters(v);   // restore this view's own filters
   setActiveTab(v);
   if(v === "users") renderUsers();
   else if(v === "settings") renderSettings();
@@ -932,6 +937,18 @@ function setActiveTab(v){
   $("settingsView").classList.toggle("hidden", v !== "settings");
   $("linksView").classList.toggle("hidden", v !== "links");
   $("tabActions").classList.toggle("hidden", !isTasks);   // task action buttons only on task views
+}
+
+/* ---------- Per-view filter state (My tasks vs Team are independent) ---------- */
+function saveViewFilters(view){
+  if(view === "mine" || view === "team")
+    filterStore[view] = { type: currentType, search: searchTerm, cols: colFilters };
+}
+function loadViewFilters(view){
+  const s = filterStore[view] || { type:"all", search:"", cols:{} };
+  currentType = s.type; searchTerm = s.search; colFilters = s.cols;
+  $("searchInput").value = searchTerm;
+  syncSubtabs();
 }
 
 /* ---------- Sub-tabs (All / Ad-hoc / Routine) + smart search ---------- */

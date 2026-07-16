@@ -37,7 +37,9 @@ let allTasks = [], currentView = "mine";
 let usersList = [];                  // directory from /api/users
 let columnConfig = null, optionsConfig = null, linksConfig = null;
 let editingId = null, editingUserEmail = null, reassignFrom = null, editingLinkIdx = null;
-let currentType = "all", searchTerm = "", colFilters = {};
+let currentType = "all", searchTerm = "", colFilters = {};   // active view's filters
+// My tasks and Team each keep their OWN filters/search/sub-tab, independently.
+let filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
 const expandedRows = new Set();
 let pollTimer = null, tickCount = 0;
 
@@ -98,9 +100,8 @@ async function enterApp(){
   $("tabUsers").classList.toggle("hidden", !isManager);
   $("tabSettings").classList.toggle("hidden", !isManager);
   $("addLinkBtn").classList.remove("hidden");   // Links board is open to everyone
-  currentType = "all"; searchTerm = ""; colFilters = {};
-  $("searchInput").value = "";
-  syncSubtabs();
+  filterStore = { mine:{type:"all",search:"",cols:{}}, team:{type:"all",search:"",cols:{}} };
+  loadViewFilters("mine");
   currentView = "mine";
   setActiveTab("mine");
   await Promise.all([loadConfig(), loadUsers()]);
@@ -209,8 +210,11 @@ function fillSelect(id, arr, blankLabel){
 document.querySelectorAll(".tab").forEach(t => t.onclick = async () => {
   const v = t.dataset.view;
   if(v === currentView) return;
+  const prev = currentView;
   currentView = v;
   closeFilterPop();
+  saveViewFilters(prev);              // remember the view we're leaving
+  if(v === "mine" || v === "team") loadViewFilters(v);   // restore this view's own filters
   setActiveTab(v);
   if(v === "users"){ await loadUsers(); renderUsers(); }
   else if(v === "settings"){ await loadConfig(); renderSettings(); }
@@ -225,6 +229,18 @@ function setActiveTab(v){
   $("settingsView").classList.toggle("hidden", v !== "settings");
   $("linksView").classList.toggle("hidden", v !== "links");
   $("tabActions").classList.toggle("hidden", !isTasks);   // task action buttons only on task views
+}
+
+/* ---------- Per-view filter state (My tasks vs Team are independent) ---------- */
+function saveViewFilters(view){
+  if(view === "mine" || view === "team")
+    filterStore[view] = { type: currentType, search: searchTerm, cols: colFilters };
+}
+function loadViewFilters(view){
+  const s = filterStore[view] || { type:"all", search:"", cols:{} };
+  currentType = s.type; searchTerm = s.search; colFilters = s.cols;
+  $("searchInput").value = searchTerm;
+  syncSubtabs();
 }
 
 /* ---------- Sub-tabs (All / Ad-hoc / Routine) + smart search ---------- */
