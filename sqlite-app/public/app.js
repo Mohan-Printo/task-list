@@ -506,6 +506,7 @@ function closeModal(){ $("modalOverlay").classList.add("hidden"); editingId = nu
 $("saveBtn").onclick = async () => {
   const topic = $("f_topic").value.trim();
   if(!topic){ $("modalMsg").textContent = "Task topic is required."; return; }
+  if(!$("f_type").value){ $("modalMsg").textContent = "Please choose a Type (Ad-hoc or Routine)."; return; }
   const custom = {};
   document.querySelectorAll("#customFields [data-cf]").forEach(el => {
     const v = (el.value || "").trim();

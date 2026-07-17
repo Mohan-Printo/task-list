@@ -237,6 +237,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   const actor = req.user;
   const data = readTaskBody(req.body);
   if (!data.topic) return res.status(400).json({ error: "Task topic is required." });
+  if (!data.type) return res.status(400).json({ error: "Type is required (Ad-hoc or Routine)." });
 
   // Owner: managers may assign to anyone; members always own their own.
   if (actor.role === "manager") {
@@ -273,6 +274,7 @@ app.put("/api/tasks/:id", requireAuth, async (req, res) => {
 
   const data = readTaskBody(req.body);
   if (!data.topic) return res.status(400).json({ error: "Task topic is required." });
+  if (!data.type) return res.status(400).json({ error: "Type is required (Ad-hoc or Routine)." });
 
   // Owner: managers may reassign; members keep the existing owner.
   if (actor.role === "manager") {
